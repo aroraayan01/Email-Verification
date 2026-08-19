@@ -1,0 +1,13 @@
+name,email,company
+Real Person,ayan@google.com,Google
+Dup Dots,a.y.a.n+tag@gmail.com,Gmail
+Dup Plain,ayan@gmail.com,Gmail
+No TLD,someone@localhost,Broken
+Typo,contact@gmial.com,Typo
+Disposable,test@mailinator.com,Throwaway
+Role,info@microsoft.com,Microsoft
+Dead Domain,hello@thisdomaindoesnotexistzq7k3m.com,Dead
+Gateway,someone@proofpoint.com,Proofpoint
+Malformed,not-an-email,Broken
+Two At,a@b@c.com,Broken
+Wrapped,"Ayan Arora <ayan@cloudflare.com>",Cloudflare

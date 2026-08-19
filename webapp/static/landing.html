@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xomexo — Email Verification &amp; Finder API</title>
+<meta name="description" content="Verify email addresses and find them by name. Real-time, bulk and API. Sees through corporate gateways other tools give up on.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%236d8bff'/><path d='M9 16.5l4.5 4.5L23 11.5' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/landing.css">
+</head>
+<body class="lp">
+
+<div class="lp-glow"></div>
+
+<header class="lp-nav">
+  <a class="lp-brand" href="/">
+    <span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12.5l5.5 5.5L20 6.5" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    Xomexo
+  </a>
+  <nav class="lp-links">
+    <a href="#features">Features</a>
+    <a href="#how">How it works</a>
+    <a href="/pricing">Pricing</a>
+    <a href="/docs-api">Docs</a>
+  </nav>
+  <div class="lp-nav-cta">
+    <a href="/account" class="lp-btn-ghost">Log in</a>
+    <a href="/account" class="lp-btn">Start free</a>
+  </div>
+</header>
+
+<!-- ===================== HERO ===================== -->
+<section class="lp-hero">
+  <div class="lp-hero-copy">
+    <div class="lp-badge"><span class="dot"></span> Live · 100 free checks daily</div>
+    <h1>Stop guessing which<br>emails are <span class="lp-grad">real.</span></h1>
+    <p class="lp-sub">Verify any address in milliseconds, or find someone's email from just a
+      name and a company. Xomexo reads the directory <em>behind</em> corporate mail gateways —
+      confirming inboxes that other tools shrug off as “catch-all”.</p>
+
+    <div class="lp-demo">
+      <input id="demoEmail" type="text" spellcheck="false" autocomplete="off"
+             placeholder="name@company.com">
+      <button id="demoBtn">Verify</button>
+    </div>
+    <p class="lp-demo-hint muted">Try it — no signup needed.</p>
+
+    <div class="lp-proof">
+      <div><strong>4</strong><span>verification layers</span></div>
+      <div class="sep"></div>
+      <div><strong>&lt;1s</strong><span>typical response</span></div>
+      <div class="sep"></div>
+      <div><strong>0</strong><span>false “valid” in testing</span></div>
+    </div>
+  </div>
+
+  <!-- product visual -->
+  <div class="lp-hero-visual">
+    <div class="mock">
+      <div class="mock-bar">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="mock-title">xomexo · verify</span>
+      </div>
+      <div class="mock-body" id="mockBody">
+        <div class="mock-row"><span class="mono">sarah.chen@northwind.io</span><span class="pill valid">valid</span></div>
+        <div class="mock-row"><span class="mono">info@northgate-mfg.com</span><span class="pill valid">valid</span></div>
+        <div class="mock-row dim"><span class="mono">j.doe@acme-corp.com</span><span class="pill catch_all">catch all</span></div>
+        <div class="mock-row"><span class="mono">old.staff@company.io</span><span class="pill invalid">invalid</span></div>
+        <div class="mock-row dim"><span class="mono">contact@vendor.net</span><span class="pill unknown">unknown</span></div>
+      </div>
+      <div class="mock-foot">
+        <span class="mono">POST /api/v1/verify</span>
+        <span class="ok">200 OK · 340ms</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== LOGOS / TRUST ===================== -->
+<section class="lp-band">
+  <span>Works with</span>
+  <div class="lp-band-items">
+    <span>Microsoft 365</span><span>Google Workspace</span><span>Proofpoint</span>
+    <span>Mimecast</span><span>Zoho</span><span>Self-hosted</span>
+  </div>
+</section>
+
+<!-- ===================== FEATURES ===================== -->
+<section id="features" class="lp-section">
+  <div class="lp-head">
+    <div class="lp-eyebrow">Features</div>
+    <h2>One tool, the whole workflow</h2>
+    <p class="lead">Check a single address, clean an entire list, or discover emails you don't have yet.</p>
+  </div>
+
+  <div class="lp-grid">
+    <article class="lp-card">
+      <div class="lp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></div>
+      <h3>Real-time verify</h3>
+      <p>One address, instant verdict. Drop it into your signup form via the API so bad emails never enter your database.</p>
+    </article>
+
+    <article class="lp-card">
+      <div class="lp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/><path d="M12 5v13"/></svg></div>
+      <h3>Bulk lists</h3>
+      <p>Upload CSV or Excel. Watch live progress, then download the clean list and the unverifiable ones as separate files.</p>
+    </article>
+
+    <article class="lp-card">
+      <div class="lp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg></div>
+      <h3>Email finder</h3>
+      <p>Have a name and a company but no address? We generate the likely patterns, test them, and return the one that's real.</p>
+    </article>
+
+    <article class="lp-card">
+      <div class="lp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg></div>
+      <h3>Developer API</h3>
+      <p>One key, JSON in and out. Verify, find, and bulk endpoints with usage reporting built in.</p>
+    </article>
+
+    <article class="lp-card accent">
+      <div class="lp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg></div>
+      <h3>Sees past gateways</h3>
+      <p>Proofpoint or Mimecast out front? We query the Microsoft directory behind it — confirming mailboxes competitors label “catch-all” and give up on.</p>
+    </article>
+
+    <article class="lp-card">
+      <div class="lp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></div>
+      <h3>Honest verdicts</h3>
+      <p>We never dress a guess up as “valid”. Catch-alls are labelled catch-all with a reason — so nothing bounces by surprise.</p>
+    </article>
+  </div>
+</section>
+
+<!-- ===================== HOW ===================== -->
+<section id="how" class="lp-section lp-alt">
+  <div class="lp-head">
+    <div class="lp-eyebrow">How it works</div>
+    <h2>Four layers, one clear answer</h2>
+    <p class="lead">Every address runs down the stack and stops the moment something is proven.</p>
+  </div>
+  <div class="lp-steps">
+    <div class="lp-step"><span class="n">01</span><h3>Syntax &amp; domain</h3><p>Format, MX records, disposable providers and dead domains — filtered instantly, for free.</p></div>
+    <div class="lp-step"><span class="n">02</span><h3>Directory lookup</h3><p>Microsoft's account directory over HTTPS. Fast, accurate, and unaffected by mail gateways.</p></div>
+    <div class="lp-step"><span class="n">03</span><h3>Mailbox probe</h3><p>A live conversation with the mail server, with a control test that exposes catch-all domains.</p></div>
+    <div class="lp-step"><span class="n">04</span><h3>Verdict</h3><p>Valid, invalid or catch-all — always with the reason behind it.</p></div>
+  </div>
+</section>
+
+<!-- ===================== CODE ===================== -->
+<section class="lp-section lp-code-sec">
+  <div class="lp-code-copy">
+    <div class="lp-eyebrow">Developers</div>
+    <h2>Two lines to integrate</h2>
+    <p class="lead" style="text-align:left;margin:0 0 24px">Grab a key from your dashboard and call
+      the API from anywhere. JSON in, JSON out — no SDK required.</p>
+    <a href="/docs-api" class="lp-btn">Read the docs</a>
+  </div>
+  <div class="lp-code">
+    <div class="mock-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="mock-title">terminal</span></div>
+<pre><code><span class="c-dim">$</span> curl -X POST https://xomexo.com/api/v1/verify \
+    -H <span class="c-str">"X-API-Key: ev_live_..."</span> \
+    -d <span class="c-str">'{"email":"sarah.chen@northwind.io"}'</span>
+
+<span class="c-dim">{</span>
+  <span class="c-key">"email"</span>: <span class="c-str">"sarah.chen@northwind.io"</span>,
+  <span class="c-key">"status"</span>: <span class="c-ok">"valid"</span>,
+  <span class="c-key">"checked_by"</span>: <span class="c-str">"microsoft"</span>,
+  <span class="c-key">"quota_remaining"</span>: <span class="c-num">99</span>
+<span class="c-dim">}</span></code></pre>
+  </div>
+</section>
+
+<!-- ===================== CTA ===================== -->
+<section class="lp-cta">
+  <h2>Clean your next list in a minute.</h2>
+  <p class="muted">Free account · 100 checks a day · no card required</p>
+  <div class="lp-cta-row">
+    <a href="/account" class="lp-btn lp-btn-lg">Start free</a>
+    <a href="/pricing" class="lp-btn-ghost lp-btn-lg">See pricing</a>
+  </div>
+</section>
+
+<footer class="lp-footer">
+  <div class="lp-foot-brand">
+    <span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12.5l5.5 5.5L20 6.5" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    <div><strong>Xomexo</strong><span class="muted">Email verification &amp; discovery</span></div>
+  </div>
+  <div class="lp-foot-links">
+    <a href="#features">Features</a><a href="/pricing">Pricing</a>
+    <a href="/docs-api">API docs</a><a href="/account">Log in</a><a href="/account">Sign up</a>
+  </div>
+</footer>
+
+<script>
+const de = document.getElementById("demoEmail");
+const db = document.getElementById("demoBtn");
+const mock = document.getElementById("mockBody");
+async function runDemo() {
+  const email = de.value.trim();
+  if (!email) { de.focus(); return; }
+  db.disabled = true; db.textContent = "…";
+  const row = document.createElement("div");
+  row.className = "mock-row live";
+  row.innerHTML = '<span class="mono"></span><span class="pill unknown">checking</span>';
+  row.querySelector(".mono").textContent = email;
+  mock.prepend(row);
+  while (mock.children.length > 6) mock.lastElementChild.remove();
+  try {
+    const res = await fetch("/api/demo", { method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email }) });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || "try again");
+    const s = d.status || "unknown";
+    row.querySelector(".pill").className = "pill " + s;
+    row.querySelector(".pill").textContent = s.replace("_", " ");
+  } catch (e) {
+    row.querySelector(".pill").className = "pill invalid";
+    row.querySelector(".pill").textContent = "error";
+  } finally { db.disabled = false; db.textContent = "Verify"; }
+}
+db.onclick = runDemo;
+de.addEventListener("keydown", e => { if (e.key === "Enter") runDemo(); });
+</script>
+</body>
+</html>

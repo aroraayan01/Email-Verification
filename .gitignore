@@ -1,0 +1,33 @@
+# --- secrets & runtime data (never commit) ---
+app.env
+*.sqlite3
+webdata/
+.venv/
+
+# --- real address lists / customer data ---
+# Anything under server/ that is a list, plus common working folders.
+server/*.csv
+testdata/
+out/
+out2/
+out_engine/
+*_results.csv
+*_all.csv
+
+# --- build & deploy artefacts ---
+*.tar.gz
+deploy/paste_*.txt
+deploy/ev.tar.gz
+
+# --- python ---
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# --- editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+server/paste_*.txt

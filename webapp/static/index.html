@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xomexo — Email Verification</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%231f6feb'/><path d='M28 52l16 16 30-32' stroke='white' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<div class="shell">
+
+  <!--SIDEBAR-->
+
+  <!-- ===================== MAIN ===================== -->
+  <div class="app-main">
+    <header class="app-head">
+      <button class="ghost side-toggle" id="sideToggle" title="Menu">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <h1 id="pageTitle">Single check</h1>
+      <div class="spacer"></div>
+      <span class="muted" id="acctEmail"></span>
+    </header>
+
+    <div class="app-body">
+
+      <!-- ---------- SINGLE ---------- -->
+      <section id="view-single" class="view active">
+        <p class="sub">Check one address against DNS, Microsoft's directory and a live mailbox probe.</p>
+        <form id="singleForm" class="checkbox-row" autocomplete="off">
+          <input id="singleInput" type="text" placeholder="name@company.com" spellcheck="false" required>
+          <button type="submit" id="singleBtn">Verify</button>
+        </form>
+        <div id="singleResult" class="result hidden"></div>
+        <div class="legend">
+          <h3>What the results mean</h3>
+          <div class="legend-grid">
+            <div><span class="pill valid">valid</span> Confirmed real — safe to send.</div>
+            <div><span class="pill invalid">invalid</span> Proven undeliverable.</div>
+            <div><span class="pill catch_all">catch all</span> Server accepts everything — nobody can confirm it.</div>
+            <div><span class="pill unknown">unknown</span> Couldn't be proven here.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- BULK ---------- -->
+      <section id="view-bulk" class="view">
+        <p class="sub">Upload a CSV or Excel file. The email column is detected automatically.</p>
+
+        <div id="dropzone" class="dropzone">
+          <div class="dz-inner">
+            <div class="dz-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/><path d="M12 5v13"/></svg></div>
+            <strong>Drop your file here</strong>
+            <span>or click to browse — .csv, .xlsx (max 25&nbsp;MB)</span>
+          </div>
+          <input id="fileInput" type="file" accept=".csv,.xlsx,.xlsm,.txt" hidden>
+        </div>
+
+        <div class="threshold-box">
+          <div class="threshold-head">
+            <label for="threshold">Auto-accept guessed addresses at or above</label>
+            <output id="threshValue">off</output>
+          </div>
+          <input type="range" id="threshold" min="0" max="100" step="5" value="0">
+          <p class="muted" id="threshHelp">Off — every unprovable (catch-all) address is left for
+            manual review. Slide right to trust the confidence guess instead. Around 85% the guess
+            is right about nine times in ten; the rest may bounce.</p>
+        </div>
+
+        <div id="jobPanel" class="panel hidden">
+          <div class="panel-head">
+            <strong id="jobName">—</strong>
+            <span id="jobStatus" class="pill">queued</span>
+          </div>
+          <div class="progress"><div id="jobBar" class="bar"></div></div>
+          <div id="jobStage" class="muted">Starting…</div>
+
+          <div id="jobDonut" class="donut-wrap hidden"></div>
+
+          <div id="jobActions" class="actions hidden">
+            <a id="dlClearout" class="btn" href="#">Download review list</a>
+            <a id="dlResolved" class="btn ghost" href="#">Download verified</a>
+            <a id="dlAll" class="btn ghost" href="#">Download all</a>
+          </div>
+        </div>
+
+        <div id="resultsPanel" class="panel hidden">
+          <div class="filters">
+            <button class="chip active" data-filter="">All</button>
+            <button class="chip" data-filter="valid">Valid</button>
+            <button class="chip" data-filter="invalid">Invalid</button>
+            <button class="chip" data-filter="catch_all">Catch all</button>
+            <button class="chip" data-filter="likely_valid">Likely valid</button>
+            <button class="chip" data-filter="unknown">Unknown</button>
+          </div>
+          <div class="table-wrap">
+            <table id="resultsTable">
+              <thead><tr><th>Email</th><th>Status</th><th>Confidence</th><th>Checked by</th><th>Why</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="resultsMore" class="muted"></div>
+        </div>
+      </section>
+
+      <!-- ---------- FIND ---------- -->
+      <section id="view-find" class="view">
+        <p class="sub">Enter a name and their company domain — we try the common patterns and verify them.</p>
+        <form id="findForm" class="find-form" autocomplete="off">
+          <input id="findName" type="text" placeholder="Full name (e.g. John Smith)" required>
+          <input id="findDomain" type="text" placeholder="company.com" spellcheck="false" required>
+          <button type="submit" id="findBtn">Find</button>
+        </form>
+        <div id="findResult" class="result hidden"></div>
+
+        <div class="bulk-find-box">
+          <strong>Have a whole list?</strong>
+          <span class="muted">Upload a file with a <b>name</b> column and a <b>domain</b> column.</span>
+          <div class="dropzone" id="dzFind">
+            <div class="dz-inner">
+              <span>Drop a CSV/Excel of names + domains, or click</span>
+            </div>
+            <input type="file" id="fileFind" accept=".csv,.xlsx,.xlsm,.txt" hidden>
+          </div>
+        </div>
+
+        <div id="findJobPanel" class="panel hidden">
+          <div class="panel-head">
+            <strong id="findJobName">—</strong>
+            <span id="findJobStatus" class="pill">queued</span>
+          </div>
+          <div class="progress"><div id="findJobBar" class="bar"></div></div>
+          <div id="findJobStage" class="muted">Starting…</div>
+          <div id="findJobActions" class="actions hidden">
+            <a id="dlFind" class="btn" href="#">Download found emails</a>
+          </div>
+        </div>
+
+        <div class="legend">
+          <h3>What you'll get back</h3>
+          <div class="legend-grid">
+            <div><span class="pill valid">found</span> Verified — this address is real.</div>
+            <div><span class="pill catch_all">guess</span> Most likely pattern; the domain can't be verified.</div>
+            <div><span class="pill invalid">not found</span> No pattern accepted — the name may differ.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- HISTORY ---------- -->
+      <section id="view-history" class="view">
+        <p class="sub">Past runs stay available to download.</p>
+        <div id="historyList" class="history"></div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
