@@ -193,8 +193,22 @@ async def find_email(req: FindRequest, request: Request):
 
 # ---------------------------------------------------------------- bulk ----
 
-def _extract_emails(raw: bytes, filename: str):
-    """Pull addresses out of CSV, XLSX, or a plain newline-separated list."""
+def _looks_like_email(cell: str) -> bool:
+    cell = (cell or "").strip()
+    return "@" in cell and " " not in cell and "." in cell.split("@")[-1]
+
+
+def _parse_table(raw: bytes, filename: str):
+    """Read the whole sheet, not just the emails.
+
+    Returns (header, rows, email_idx):
+      * header    -- the column names if the file has a header row, else None
+      * rows      -- every data row as a list of strings (all columns kept)
+      * email_idx -- which column holds the addresses
+
+    Keeping the full table is what lets the download echo the user's original
+    columns back and append the verdict columns after them.
+    """
     import csv as _csv
 
     name = filename.lower()
@@ -206,17 +220,42 @@ def _extract_emails(raw: bytes, filename: str):
         workbook.close()
     else:
         text = raw.decode("utf-8-sig", "replace")
-        rows = list(_csv.reader(io.StringIO(text)))
+        rows = [[(c or "").strip() for c in row]
+                for row in _csv.reader(io.StringIO(text))]
 
-    emails = []
-    for row in rows:
-        for cell in row:
-            cell = (cell or "").strip()
-            if "@" in cell and " " not in cell.strip():
-                emails.append(cell)
-                break
-    # A single-column file with no header still needs its first row.
-    return [e for e in emails if "@" in e]
+    # Drop fully-empty rows (trailing blanks are common in exports).
+    rows = [r for r in rows if any(cell for cell in r)]
+    if not rows:
+        return None, [], 0
+
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]  # pad ragged rows
+
+    # The email column is the one with the most address-shaped cells across the
+    # body of the file (skip row 0 in case it is a header).
+    body = rows[1:] if len(rows) > 1 else rows
+    best_idx, best_hits = 0, -1
+    for idx in range(width):
+        hits = sum(1 for r in body if _looks_like_email(r[idx]))
+        if hits > best_hits:
+            best_idx, best_hits = idx, hits
+
+    # Header present if row 0's email cell is NOT an address but the body has
+    # them -- i.e. row 0 is labels, not data.
+    header = None
+    if len(rows) > 1 and not _looks_like_email(rows[0][best_idx]) and best_hits > 0:
+        header = rows[0]
+        data = rows[1:]
+    else:
+        data = rows
+
+    return header, data, best_idx
+
+
+def _extract_emails(raw: bytes, filename: str):
+    """Flat list of addresses, for callers that only need the emails."""
+    _header, rows, idx = _parse_table(raw, filename)
+    return [r[idx] for r in rows if idx < len(r) and _looks_like_email(r[idx])]
 
 
 async def _run_job(job_id: str, emails, pattern_threshold: int = 0):
@@ -261,7 +300,9 @@ async def bulk(background: BackgroundTasks, file: UploadFile = File(...),
     if len(raw) > 25 * 1024 * 1024:
         raise HTTPException(413, "file too large (max 25 MB)")
     try:
-        emails = _extract_emails(raw, file.filename or "list.csv")
+        header, rows, email_idx = _parse_table(raw, file.filename or "list.csv")
+        emails = [r[email_idx] for r in rows
+                  if email_idx < len(r) and _looks_like_email(r[email_idx])]
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, "could not read the file: %s" % exc)
     if not emails:
@@ -269,6 +310,8 @@ async def bulk(background: BackgroundTasks, file: UploadFile = File(...),
 
     threshold = max(0, min(100, int(threshold)))
     job_id = store.create(file.filename or "list.csv")
+    # Keep the user's original columns so the download can echo them back.
+    store.write_source(job_id, header, rows, email_idx)
     store.update(job_id, rows_in=len(emails))
     # Pass the coroutine FUNCTION, not a coroutine object -- FastAPI inspects
     # it and awaits async callables on the loop. Handing it a sync callable
@@ -425,7 +468,11 @@ async def download(job_id: str, which: str = "clearout"):
     job = store.get(job_id)
     if job is None:
         raise HTTPException(404, "no such job")
-    path = store.result_path(job_id, which)
+    # Prefer the enriched file (original columns + verdicts); fall back to the
+    # plain verdict file for jobs created before this existed.
+    path = store.enriched_path(job_id, which)
+    if not os.path.exists(path):
+        path = store.result_path(job_id, which)
     if not os.path.exists(path):
         raise HTTPException(404, "results not ready")
     stem = os.path.splitext(job["filename"])[0][:40]

@@ -104,8 +104,10 @@ class JobStore:
         job = self.get(job_id)
         if job is None:
             return False
-        for suffix in ("all", "clearout", "resolved"):
-            path = self.result_path(job_id, suffix)
+        paths = [self.result_path(job_id, s) for s in ("all", "clearout", "resolved")]
+        paths += [self.enriched_path(job_id, s) for s in ("all", "clearout", "resolved")]
+        paths.append(self.source_path(job_id))
+        for path in paths:
             if os.path.exists(path):
                 try:
                     os.remove(path)
@@ -119,6 +121,87 @@ class JobStore:
 
     def result_path(self, job_id: str, which: str = "all") -> str:
         return os.path.join(self.results_dir, "%s_%s.csv" % (job_id, which))
+
+    def source_path(self, job_id: str) -> str:
+        return os.path.join(self.results_dir, "%s_source.json" % job_id)
+
+    def enriched_path(self, job_id: str, which: str = "all") -> str:
+        return os.path.join(self.results_dir, "%s_%s_full.csv" % (job_id, which))
+
+    # Verdict columns appended after the user's own columns.
+    VERDICT_COLS = ["verification_status", "confidence", "checked_by",
+                    "mail_host", "reason", "suggested_fix"]
+
+    def write_source(self, job_id, header, rows, email_idx) -> None:
+        """Persist the uploaded table verbatim so downloads can rebuild it."""
+        with open(self.source_path(job_id), "w", encoding="utf-8") as handle:
+            json.dump({"header": header, "rows": rows, "email_idx": email_idx},
+                      handle)
+
+    def read_source(self, job_id):
+        path = self.source_path(job_id)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return json.load(handle)
+        except (ValueError, OSError):
+            return None
+
+    def _write_enriched(self, job_id: str, verdicts) -> None:
+        """Original columns + verdict columns, one file per bucket.
+
+        Rows are matched to verdicts by address, so duplicate addresses each
+        get the same verdict and every original row is preserved in 'all'.
+        """
+        source = self.read_source(job_id)
+        if not source:
+            return
+        rows = source.get("rows") or []
+        email_idx = source.get("email_idx") or 0
+        header = source.get("header")
+
+        # Map address -> verdict. When an address appears more than once the
+        # engine marks later copies "duplicate"; for the enriched file we want
+        # every row to carry the address's REAL verdict, so a duplicate marker
+        # never overwrites a real one.
+        vmap = {}
+        for v in verdicts:
+            key = (v.email or "").strip().lower()
+            if v.status == "duplicate" and key in vmap:
+                continue
+            vmap[key] = v
+
+        width = max((len(r) for r in rows), default=email_idx + 1)
+        if header:
+            base_header = header + [""] * (width - len(header))
+        else:
+            base_header = ["column_%d" % (i + 1) for i in range(width)]
+        out_header = base_header + self.VERDICT_COLS
+
+        buckets = {
+            "all": None,
+            "clearout": "to_vendor",
+            "resolved": "siphoned",
+        }
+        for which, want in buckets.items():
+            with open(self.enriched_path(job_id, which), "w", newline="",
+                      encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(out_header)
+                for row in rows:
+                    row = list(row) + [""] * (width - len(row))
+                    email = row[email_idx].strip().lower() if email_idx < len(row) else ""
+                    v = vmap.get(email)
+                    if want is not None and (v is None or v.disposition != want):
+                        continue
+                    if v is None:
+                        writer.writerow(row + [""] * len(self.VERDICT_COLS))
+                    else:
+                        writer.writerow(row + [
+                            v.status,
+                            "" if v.confidence is None else v.confidence,
+                            v.tier, v.route, v.reason, v.suggestion])
 
     FIELDS = ["email", "status", "confidence", "disposition", "tier", "route",
               "reason", "suggestion"]
@@ -150,6 +233,8 @@ class JobStore:
                         v.email, v.status,
                         "" if v.confidence is None else v.confidence,
                         v.disposition, v.tier, v.route, v.reason, v.suggestion])
+        # Also write the original-columns-preserved version for downloads.
+        self._write_enriched(job_id, verdicts)
 
     def read_results(self, job_id: str, which: str = "all",
                      status: str = "", limit: int = 500,
