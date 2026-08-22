@@ -88,6 +88,14 @@ class Users:
                 if name not in cols:
                     conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (name, ddl))
 
+            # One-time: when email verification becomes mandatory, grandfather
+            # every account that already exists so the new gate never locks out
+            # a user who signed up before it. New signups start unverified.
+            ver = conn.execute("PRAGMA user_version").fetchone()[0]
+            if ver < 1:
+                conn.execute("UPDATE users SET verified = 1")
+                conn.execute("PRAGMA user_version = 1")
+
     def seed_admin(self, email: str, password: str) -> None:
         """Ensure an admin account exists (owner). Idempotent."""
         email = email.strip().lower()
@@ -97,14 +105,15 @@ class Users:
                 salt = secrets.token_hex(16)
                 conn.execute(
                     """INSERT INTO users (email, pw_hash, pw_salt, api_key,
-                        daily_quota, quota_date, is_admin, created_at)
-                       VALUES (?,?,?,?,?,?,1,?)""",
+                        daily_quota, quota_date, is_admin, verified, created_at)
+                       VALUES (?,?,?,?,?,?,1,1,?)""",
                     (email, _hash_pw(password, salt), salt,
                      "ev_" + secrets.token_urlsafe(32), 1_000_000, _today(),
                      _now().isoformat(timespec="seconds")))
             else:
-                conn.execute("UPDATE users SET is_admin = 1 WHERE email = ?",
-                             (email,))
+                conn.execute(
+                    "UPDATE users SET is_admin = 1, verified = 1 WHERE email = ?",
+                    (email,))
 
     def _conn(self):
         conn = sqlite3.connect(self.path, timeout=30)
@@ -291,6 +300,13 @@ class Users:
         with self._conn() as conn:
             conn.execute("UPDATE users SET disabled = ? WHERE id = ?",
                          (1 if disabled else 0, user_id))
+
+    def set_verified(self, user_id: int) -> None:
+        """Admin escape hatch: confirm an account by hand (e.g. if the
+        verification email never arrived)."""
+        with self._conn() as conn:
+            conn.execute("UPDATE users SET verified = 1, email_token = '' "
+                         "WHERE id = ?", (user_id,))
 
     def log_query(self, user_id: int, kind: str, query: str, result: str,
                   via: str = "web") -> None:

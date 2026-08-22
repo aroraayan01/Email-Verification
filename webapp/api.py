@@ -88,6 +88,8 @@ def _api_user(api_key: str) -> dict:
         raise HTTPException(401, "invalid or missing API key")
     if user["disabled"]:
         raise HTTPException(403, "account disabled")
+    if not user["verified"]:
+        raise HTTPException(403, "confirm your email before using the API")
     return user
 
 
@@ -271,10 +273,34 @@ async def signup(request: Request):
     except Exception:  # noqa: BLE001
         pass
 
-    resp = RedirectResponse("/app", 302)
+    # Log them in (so they can resend / verify) but hold them at the
+    # check-your-inbox page until the address is confirmed.
+    resp = RedirectResponse("/verify-pending", 302)
     resp.set_cookie(ACCOUNT_COOKIE, _account_token(user["id"]),
                     max_age=30 * 24 * 3600, httponly=True, samesite="lax")
     return resp
+
+
+@router.get("/verify-pending", response_class=HTMLResponse)
+async def verify_pending(request: Request, sent: int = 0):
+    user = _current_account(request)
+    if user is None:
+        return RedirectResponse("/account", 302)
+    if user["verified"]:
+        return RedirectResponse("/app", 302)
+
+    note = ("<p class='ok-note'>A new link is on its way.</p>" if sent
+            else "")
+    inner = ("""<h1>Confirm your email</h1>
+<p class="sub">We sent a verification link to <b>{email}</b>.
+Click it to activate your account.</p>{note}
+<form method="post" action="/account/resend-verification">
+<button type="submit">Resend the link</button></form>
+<p class="auth-foot">Wrong address? <a href="/account/logout">Sign out</a>
+and start over.</p>""").format(email=user["email"], note=note)
+    return HTMLResponse(shell.public_page("Confirm your email",
+        '<div class="auth-wrap"><div class="auth-card">'
+        '<div class="auth-logo">' + shell.MARK + '</div>' + inner + '</div></div>'))
 
 
 @router.get("/verify-email", response_class=HTMLResponse)
@@ -299,7 +325,7 @@ async def resend_verification(request: Request):
             mailer.send_verification(user["email"], token)
         except Exception:  # noqa: BLE001
             pass
-    return RedirectResponse("/dashboard", 302)
+    return RedirectResponse("/verify-pending?sent=1", 302)
 
 
 @router.post("/account/login")
@@ -543,12 +569,17 @@ async def admin_panel(request: Request):
             "<td><form method='post' action='/admin/user/%d/quota' style='display:flex;gap:5px'>"
             "<input name='quota' value='%d' style='width:86px;padding:5px 8px;flex:none'>"
             "<button class='copy-btn'>Set</button></form></td>"
-            "<td><form method='post' action='/admin/user/%d/toggle'>"
+            "<td style='display:flex;gap:5px'>"
+            "%s"
+            "<form method='post' action='/admin/user/%d/toggle'>"
             "<button class='copy-btn'>%s</button></form></td></tr>"
             % (u["id"], u["email"], badges, "{:,}".format(u["used_today"]),
                "{:,}".format(u["daily_quota"]), "{:,}".format(u["total_checks"]),
-               u["id"], opts, u["id"], u["daily_quota"], u["id"],
-               "Enable" if u["disabled"] else "Disable"))
+               u["id"], opts, u["id"], u["daily_quota"],
+               ("" if u["verified"] else
+                "<form method='post' action='/admin/user/%d/verify'>"
+                "<button class='copy-btn'>Verify</button></form>" % u["id"]),
+               u["id"], "Enable" if u["disabled"] else "Disable"))
 
     qrows = ""
     for q in users.recent_queries(200):
@@ -704,4 +735,12 @@ async def admin_toggle(uid: int, request: Request):
     u = _user_by_id(uid)
     if u:
         users.set_disabled(uid, not u["disabled"])
+    return RedirectResponse("/admin", 302)
+
+
+@router.post("/admin/user/{uid}/verify")
+async def admin_verify(uid: int, request: Request):
+    if _require_admin(request) is None:
+        return RedirectResponse("/account", 302)
+    users.set_verified(uid)
     return RedirectResponse("/admin", 302)

@@ -53,6 +53,11 @@ _PUBLIC_PATHS = {"/", "/account", "/signup", "/account/login", "/account/logout"
                  "/pricing", "/verify-email", "/forgot", "/reset"}
 _PUBLIC_PREFIXES = ("/static/", "/api/v1/")
 
+# Reachable by a logged-in but not-yet-verified account (everything else is
+# held behind the email-verification gate for new signups).
+_UNVERIFIED_OK = {"/verify-pending", "/verify-email",
+                  "/account/resend-verification", "/account/logout"}
+
 
 @app.middleware("http")
 async def require_login(request: Request, call_next):
@@ -71,6 +76,12 @@ async def require_login(request: Request, call_next):
 
     # Everything else needs any logged-in, enabled account.
     if user is not None and not user.get("disabled"):
+        # New accounts must confirm their email before using the app.
+        if not user.get("verified") and path not in _UNVERIFIED_OK:
+            if path.startswith("/api/"):
+                return JSONResponse(
+                    {"detail": "confirm your email to continue"}, status_code=403)
+            return RedirectResponse("/verify-pending", status_code=302)
         return await call_next(request)
     if path.startswith("/api/"):
         return JSONResponse({"detail": "login required"}, status_code=401)

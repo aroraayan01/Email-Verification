@@ -79,3 +79,7 @@ body.pub { display: flex; flex-direction: column; min-height: 100vh; background:
   .pub-links { display: none; }
   .pub-main { padding: 30px 16px 56px; }
 }
+
+.auth-card .ok-note { color: var(--good); font-size: 13px; font-weight: 560;
+  background: var(--good-soft, rgba(34,160,90,.1)); padding: 8px 12px;
+  border-radius: 8px; margin: 0 0 14px; }
