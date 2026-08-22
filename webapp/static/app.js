@@ -388,14 +388,38 @@ async function loadResults(status) {
 
 /* ---------------- history ---------------- */
 async function loadHistory() {
-  const res = await fetch("/api/jobs");
-  const { jobs } = await res.json();
   const list = $("#historyList");
-  if (!jobs.length) {
-    list.innerHTML = '<p class="muted">Nothing yet. Upload a list to get started.</p>';
+  const [jobsRes, histRes] = await Promise.all([
+    fetch("/api/jobs"),
+    fetch("/api/history"),
+  ]);
+  const { jobs } = await jobsRes.json();
+  const { checks } = await histRes.json();
+
+  if (!jobs.length && !checks.length) {
+    list.innerHTML = '<p class="muted">Nothing yet. Run a check or upload a list to get started.</p>';
     return;
   }
-  list.innerHTML = jobs
+
+  // Single verify + find checks, newest first, as a compact table.
+  let single = "";
+  if (checks.length) {
+    single = `<h3 class="hist-sub">Single checks</h3>
+      <div class="table-wrap"><table><thead><tr>
+      <th>When</th><th>Type</th><th>Query</th><th>Result</th><th>Via</th>
+      </tr></thead><tbody>` +
+      checks.map((c) => `<tr>
+        <td class="muted">${esc((c.at || "").replace("T", " ").slice(0, 19))}</td>
+        <td>${esc(c.kind)}</td>
+        <td class="email">${esc(c.query)}</td>
+        <td><span class="pill ${esc((c.result || "").split(" ")[0])}">${esc(c.result || "—")}</span></td>
+        <td class="muted">${esc(c.via)}</td>
+      </tr>`).join("") +
+      `</tbody></table></div>`;
+  }
+
+  const jobsHtml = !jobs.length ? "" :
+    `<h3 class="hist-sub">Bulk uploads</h3><div class="hist-grid">` + jobs
     .map((j) => {
       const counts = j.counts || {};
       const total = Object.values(counts).reduce((a, b) => a + b, 0) || j.unique_in || 0;
@@ -417,7 +441,8 @@ async function loadHistory() {
         </div>
       </div>`;
     })
-    .join("");
+    .join("") + `</div>`;
+  list.innerHTML = single + jobsHtml;
   $$(".del").forEach((btn) => {
     btn.onclick = async () => {
       await fetch(`/api/jobs/${btn.dataset.id}`, { method: "DELETE" });

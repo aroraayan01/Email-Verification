@@ -46,3 +46,27 @@ Re-run Step 1 with a fresh `paste_1_code.txt`, then:
 systemctl restart email-verifier
 ```
 Your cache and password survive (they live in `webdata/` and `app.env`).
+
+---
+
+## Updating after the first install (the easy way)
+
+Once installed, every future update is **one command** on the server:
+
+```bash
+bash /opt/email-verifier/deploy/deploy.sh
+```
+
+It pulls the latest code from GitHub, refreshes dependencies, and restarts the
+service. Your `app.env` (password/secret) and `webdata/` (accounts, history,
+cache) are untracked by git, so they are never touched.
+
+The normal loop is now:
+
+1. **Locally:** make changes, commit, `git push`.
+2. **On the server:** `bash /opt/email-verifier/deploy/deploy.sh`.
+
+The first time you run it, it converts the existing `/opt/email-verifier`
+tarball install into a git checkout in place (data preserved) — no manual steps.
+The base64 paste flow (`paste_update.txt`) still works as a fallback if the
+server ever can't reach GitHub.

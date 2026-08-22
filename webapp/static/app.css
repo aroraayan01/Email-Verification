@@ -242,6 +242,9 @@ td.why { color: var(--muted); max-width: 320px; }
 #resultsMore { margin-top: 11px; }
 
 /* ---------- history grid ---------- */
+.hist-sub { font-size: 14px; font-weight: 640; color: var(--muted); margin: 22px 0 12px; }
+.hist-sub:first-child { margin-top: 0; }
+.hist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px,1fr)); gap: 16px; }
 .history { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px,1fr)); gap: 16px; }
 .hist-card { background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-lg); padding: 18px; box-shadow: var(--shadow-sm); transition: .16s; }

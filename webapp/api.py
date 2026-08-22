@@ -141,7 +141,9 @@ async def v1_verify(body: V1Verify, authorization: str = Header(default=""),
 
     allow_smtp = (_engine["enable_smtp"] and PUBLIC_SMTP
                   and users.bump_counter("smtp_global", GLOBAL_SMTP_PER_HOUR, 3600))
-    v = await _run_one((body.email or "").strip(), allow_smtp)
+    email = (body.email or "").strip()
+    v = await _run_one(email, allow_smtp)
+    users.log_query(user["id"], "verify", email, v.status, "api")
     return {
         "email": v.email, "status": v.status, "confidence": v.confidence,
         "checked_by": v.tier or "vendor", "reason": v.reason,
@@ -169,6 +171,9 @@ async def v1_find(body: V1Find, authorization: str = Header(default=""),
     finally:
         if cache:
             cache.close()
+    users.log_query(user["id"], "find",
+                    "%s @ %s" % ((body.name or "").strip(), (body.domain or "").strip()),
+                    r.status, "api")
     return {"email": r.email, "status": r.status, "confidence": r.confidence,
             "quota_remaining": remaining}
 
@@ -531,7 +536,7 @@ async def admin_panel(request: Request):
                        % (pl, " selected" if u["plan"] == pl else "", pl.title())
                        for pl in ("free", "pro", "business"))
         rows += (
-            "<tr><td>%s%s</td><td>%s / %s</td><td>%s</td>"
+            "<tr><td><a href='/admin/user/%d/history'>%s</a>%s</td><td>%s / %s</td><td>%s</td>"
             "<td><form method='post' action='/admin/user/%d/plan' style='display:flex;gap:5px'>"
             "<select name='plan' class='chip' style='padding:5px 8px'>%s</select>"
             "<button class='copy-btn'>Set</button></form></td>"
@@ -540,7 +545,7 @@ async def admin_panel(request: Request):
             "<button class='copy-btn'>Set</button></form></td>"
             "<td><form method='post' action='/admin/user/%d/toggle'>"
             "<button class='copy-btn'>%s</button></form></td></tr>"
-            % (u["email"], badges, "{:,}".format(u["used_today"]),
+            % (u["id"], u["email"], badges, "{:,}".format(u["used_today"]),
                "{:,}".format(u["daily_quota"]), "{:,}".format(u["total_checks"]),
                u["id"], opts, u["id"], u["daily_quota"], u["id"],
                "Enable" if u["disabled"] else "Disable"))
@@ -579,6 +584,54 @@ async def admin_panel(request: Request):
         rows=rows or "<tr><td colspan='6' class='muted'>No users yet</td></tr>",
         qrows=qrows or "<tr><td colspan='6' class='muted'>No searches yet</td></tr>")
     return HTMLResponse(shell.page("Admin", admin, body, active="admin", wide=True))
+
+
+@router.get("/admin/user/{uid}/history", response_class=HTMLResponse)
+async def admin_user_history(uid: int, request: Request):
+    admin = _require_admin(request)
+    if admin is None:
+        return RedirectResponse("/account", 302)
+    from webapp.users import _today
+    admin["_used"] = admin["used_today"] if admin["quota_date"] == _today() else 0
+
+    target = _user_by_id(uid)
+    if target is None:
+        return HTMLResponse(shell.page("User history", admin,
+            "<p class='muted'>No such user.</p><p><a href='/admin'>&larr; Back to admin</a></p>",
+            active="admin"))
+
+    rows = ""
+    for q in users.recent_queries(2000, user_id=uid):
+        result = q["result"] or ""
+        rows += ("<tr><td class='muted'>%s</td><td>%s</td><td class='email'>%s</td>"
+                 "<td><span class='pill %s'>%s</span></td><td class='muted'>%s</td></tr>"
+                 % (q["at"][:19].replace("T", " "), q["kind"], q["query"],
+                    result.split()[0] if result else "", result or "—", q["via"]))
+
+    badges = ""
+    if target["is_admin"]:
+        badges += " <span class='pill valid'>admin</span>"
+    if target["disabled"]:
+        badges += " <span class='pill invalid'>disabled</span>"
+
+    body = """<p><a href="/admin">&larr; Back to admin</a></p>
+<div class="summary" style="margin-top:6px">
+  <div class="stat"><span>{used}</span><label>used today</label></div>
+  <div class="stat"><span>{quota}</span><label>daily cap</label></div>
+  <div class="stat"><span>{total}</span><label>all-time checks</label></div>
+  <div class="stat"><span>{plan}</span><label>plan</label></div>
+</div>
+<h3 style="margin:26px 0 12px;font-size:15px">Full history — {email}{badges}</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>When</th><th>Type</th><th>Query</th><th>Result</th><th>Via</th></tr></thead>
+<tbody>{rows}</tbody></table></div>""".format(
+        used="{:,}".format(target["used_today"]),
+        quota="{:,}".format(target["daily_quota"]),
+        total="{:,}".format(target["total_checks"]),
+        plan=target["plan"].title(), email=target["email"], badges=badges,
+        rows=rows or "<tr><td colspan='5' class='muted'>No checks yet</td></tr>")
+    return HTMLResponse(shell.page("User history", admin, body,
+                                   active="admin", wide=True))
 
 
 @router.get("/account/history.csv")

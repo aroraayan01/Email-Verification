@@ -379,6 +379,24 @@ async def list_jobs():
     return {"jobs": store.list()}
 
 
+@app.get("/api/history")
+async def my_history(request: Request):
+    """This account's single verify + find checks, newest first.
+
+    Bulk uploads live in /api/jobs; this is everything the History tab was
+    missing -- the one-off checks the user ran from the Single and Find tools.
+    """
+    from webapp.api import current_account, users as _users
+    account = current_account(request)
+    if account is None:
+        return {"checks": []}
+    rows = _users.recent_queries(200, user_id=account["id"])
+    checks = [{"kind": r["kind"], "query": r["query"], "result": r["result"],
+               "via": r["via"], "at": r["at"]}
+              for r in rows if r["kind"] in ("verify", "find")]
+    return {"checks": checks}
+
+
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: str):
     job = store.get(job_id)
