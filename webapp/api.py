@@ -252,33 +252,42 @@ async def signup(request: Request):
     if len(password) < 8:
         return RedirectResponse("/account?err=Password+needs+8%2B+characters", 302)
 
-    # Guard the door with our own engine: only real addresses can register.
-    try:
-        v = await _run_one(email, allow_smtp=False)
-        if v.status == "invalid":
-            return RedirectResponse(
-                "/account?err=That+email+looks+undeliverable", 302)
-    except Exception:  # noqa: BLE001 - never block signup on a probe error
-        pass
-
     try:
         user = users.create(email, password)
     except ValueError:
         return RedirectResponse("/account?err=Email+already+registered", 302)
 
-    # Fire off the verification link (non-blocking -- signup succeeds regardless).
+    # Email the confirmation code (non-blocking -- signup succeeds regardless).
     try:
         from webapp import mailer
         mailer.send_verification(email, user["email_token"])
     except Exception:  # noqa: BLE001
         pass
 
-    # Log them in (so they can resend / verify) but hold them at the
-    # check-your-inbox page until the address is confirmed.
+    # Log them in (so they can enter / resend the code) but hold them at the
+    # confirmation page until the address is verified.
     resp = RedirectResponse("/verify-pending", 302)
     resp.set_cookie(ACCOUNT_COOKIE, _account_token(user["id"]),
                     max_age=30 * 24 * 3600, httponly=True, samesite="lax")
     return resp
+
+
+def _verify_pending_page(user: dict, note: str = "") -> HTMLResponse:
+    inner = ("""<h1>Enter your code</h1>
+<p class="sub">We emailed a 6-digit code to <b>{email}</b>.
+Enter it below to activate your account.</p>{note}
+<form method="post" action="/verify-otp">
+<input name="code" inputmode="numeric" autocomplete="one-time-code"
+  pattern="[0-9]*" maxlength="6" placeholder="123456" autofocus required
+  style="text-align:center;letter-spacing:8px;font-size:20px">
+<button type="submit">Verify</button></form>
+<form method="post" action="/account/resend-verification" style="margin-top:6px">
+<button type="submit" class="btn ghost" style="width:100%">Resend the code</button></form>
+<p class="auth-foot">Wrong address? <a href="/account/logout">Sign out</a>
+and start over.</p>""").format(email=user["email"], note=note)
+    return HTMLResponse(shell.public_page("Confirm your email",
+        '<div class="auth-wrap"><div class="auth-card">'
+        '<div class="auth-logo">' + shell.MARK + '</div>' + inner + '</div></div>'))
 
 
 @router.get("/verify-pending", response_class=HTMLResponse)
@@ -288,29 +297,30 @@ async def verify_pending(request: Request, sent: int = 0):
         return RedirectResponse("/account", 302)
     if user["verified"]:
         return RedirectResponse("/app", 302)
-
-    note = ("<p class='ok-note'>A new link is on its way.</p>" if sent
-            else "")
-    inner = ("""<h1>Confirm your email</h1>
-<p class="sub">We sent a verification link to <b>{email}</b>.
-Click it to activate your account.</p>{note}
-<form method="post" action="/account/resend-verification">
-<button type="submit">Resend the link</button></form>
-<p class="auth-foot">Wrong address? <a href="/account/logout">Sign out</a>
-and start over.</p>""").format(email=user["email"], note=note)
-    return HTMLResponse(shell.public_page("Confirm your email",
-        '<div class="auth-wrap"><div class="auth-card">'
-        '<div class="auth-logo">' + shell.MARK + '</div>' + inner + '</div></div>'))
+    note = "<p class='ok-note'>A fresh code is on its way.</p>" if sent else ""
+    return _verify_pending_page(user, note)
 
 
-@router.get("/verify-email", response_class=HTMLResponse)
-async def verify_email(token: str = ""):
-    user = users.verify_by_token(token)
-    msg = ("<h1>Email verified</h1><p class='sub'>Your account is confirmed.</p>"
-           "<a href='/app' class='btn'>Go to the app</a>") if user else \
-          ("<h1>Link expired</h1><p class='sub'>That verification link is invalid "
-           "or already used.</p><a href='/app' class='btn'>Back to the app</a>")
-    return _simple_page("Verify email", msg)
+@router.post("/verify-otp")
+async def verify_otp(request: Request):
+    user = _current_account(request)
+    if user is None:
+        return RedirectResponse("/account", 302)
+    if user["verified"]:
+        return RedirectResponse("/app", 302)
+
+    form = await request.form()
+    code = (form.get("code") or "").strip()
+    ok, reason = users.check_otp(user["id"], code)
+    if ok:
+        return RedirectResponse("/app", 302)
+
+    msg = {
+        "bad": "That code isn't right. Try again.",
+        "expired": "That code has expired. We can send a new one.",
+        "locked": "Too many tries. Request a fresh code below.",
+    }.get(reason, "That code isn't right. Try again.")
+    return _verify_pending_page(user, "<p class='err'>%s</p>" % msg)
 
 
 @router.post("/account/resend-verification")
@@ -319,10 +329,10 @@ async def resend_verification(request: Request):
     if user is None:
         return RedirectResponse("/account", 302)
     if not user["verified"]:
-        token = users.new_token(user["id"])
+        code = users.issue_otp(user["id"])
         try:
             from webapp import mailer
-            mailer.send_verification(user["email"], token)
+            mailer.send_verification(user["email"], code)
         except Exception:  # noqa: BLE001
             pass
     return RedirectResponse("/verify-pending?sent=1", 302)

@@ -58,6 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_queries_user ON queries(user_id, id);
 
 FREE_DAILY_QUOTA = 100
 
+OTP_TTL_SECONDS = 15 * 60     # a code is valid for 15 minutes
+OTP_MAX_TRIES = 5             # wrong guesses before a fresh code is required
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -72,6 +75,11 @@ def _hash_pw(password: str, salt: str) -> str:
         "sha256", password.encode(), salt.encode(), 120_000).hex()
 
 
+def _otp() -> str:
+    """A 6-digit numeric code, uniform over 000000..999999."""
+    return "%06d" % secrets.randbelow(1_000_000)
+
+
 class Users:
     def __init__(self, path: str):
         self.path = path
@@ -83,6 +91,8 @@ class Users:
                     ("is_admin", "INTEGER NOT NULL DEFAULT 0"),
                     ("verified", "INTEGER NOT NULL DEFAULT 0"),
                     ("email_token", "TEXT DEFAULT ''"),
+                    ("email_token_at", "TEXT DEFAULT ''"),
+                    ("otp_tries", "INTEGER NOT NULL DEFAULT 0"),
                     ("reset_token", "TEXT DEFAULT ''"),
                     ("reset_at", "TEXT DEFAULT ''")):
                 if name not in cols:
@@ -126,39 +136,71 @@ class Users:
         email = email.strip().lower()
         salt = secrets.token_hex(16)
         api_key = "ev_" + secrets.token_urlsafe(32)
-        token = secrets.token_urlsafe(24)
+        code = _otp()
         with self._conn() as conn:
             try:
                 conn.execute(
                     """INSERT INTO users
                        (email, pw_hash, pw_salt, api_key, daily_quota, quota_date,
-                        email_token, created_at)
-                       VALUES (?,?,?,?,?,?,?,?)""",
+                        email_token, email_token_at, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
                     (email, _hash_pw(password, salt), salt, api_key,
-                     FREE_DAILY_QUOTA, _today(), token,
+                     FREE_DAILY_QUOTA, _today(), code,
+                     _now().isoformat(timespec="seconds"),
                      _now().isoformat(timespec="seconds")))
             except sqlite3.IntegrityError:
                 raise ValueError("an account with that email already exists")
         return self.by_email(email)
 
-    def new_token(self, user_id: int) -> str:
-        token = secrets.token_urlsafe(24)
+    def issue_otp(self, user_id: int) -> str:
+        """Generate a fresh code, reset the attempt counter, and return it."""
+        code = _otp()
         with self._conn() as conn:
-            conn.execute("UPDATE users SET email_token = ? WHERE id = ?",
-                         (token, user_id))
-        return token
+            conn.execute(
+                "UPDATE users SET email_token = ?, email_token_at = ?, "
+                "otp_tries = 0 WHERE id = ?",
+                (code, _now().isoformat(timespec="seconds"), user_id))
+        return code
 
-    def verify_by_token(self, token: str) -> Optional[dict]:
-        if not token:
-            return None
+    def check_otp(self, user_id: int, code: str):
+        """Validate a submitted code. Returns (ok: bool, reason: str).
+
+        reason is one of: ok, already, expired, locked, bad -- so the UI can
+        show a helpful message. A correct code marks the account verified and
+        clears the code; a wrong one burns one of OTP_MAX_TRIES attempts.
+        """
+        code = (code or "").strip()
         with self._conn() as conn:
-            row = conn.execute("SELECT * FROM users WHERE email_token = ?",
-                               (token,)).fetchone()
+            row = conn.execute("SELECT * FROM users WHERE id = ?",
+                               (user_id,)).fetchone()
             if row is None:
-                return None
-            conn.execute("UPDATE users SET verified = 1, email_token = '' "
-                         "WHERE id = ?", (row["id"],))
-        return dict(row)
+                return False, "bad"
+            if row["verified"]:
+                return True, "already"
+            stored = row["email_token"] or ""
+            if not stored:
+                return False, "expired"
+            # Expiry.
+            try:
+                issued = datetime.fromisoformat(row["email_token_at"])
+                if issued.tzinfo is None:
+                    issued = issued.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                issued = None
+            if issued is None or (_now() - issued).total_seconds() > OTP_TTL_SECONDS:
+                return False, "expired"
+            # Too many wrong guesses -- force a resend.
+            if row["otp_tries"] >= OTP_MAX_TRIES:
+                return False, "locked"
+            # Constant-time compare so timing can't leak the code.
+            if hmac.compare_digest(stored, code):
+                conn.execute("UPDATE users SET verified = 1, email_token = '', "
+                             "email_token_at = '', otp_tries = 0 WHERE id = ?",
+                             (user_id,))
+                return True, "ok"
+            conn.execute("UPDATE users SET otp_tries = otp_tries + 1 WHERE id = ?",
+                         (user_id,))
+            return False, "bad"
 
     # -- password reset ---------------------------------------------------
 

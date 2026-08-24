@@ -50,12 +50,12 @@ app = FastAPI(title="Email Verifier", docs_url=None, redoc_url=None)
 # authenticates by key inside the endpoint).
 _PUBLIC_PATHS = {"/", "/account", "/signup", "/account/login", "/account/logout",
                  "/docs-api", "/favicon.ico", "/login", "/api/demo",
-                 "/pricing", "/verify-email", "/forgot", "/reset"}
+                 "/pricing", "/forgot", "/reset"}
 _PUBLIC_PREFIXES = ("/static/", "/api/v1/")
 
 # Reachable by a logged-in but not-yet-verified account (everything else is
 # held behind the email-verification gate for new signups).
-_UNVERIFIED_OK = {"/verify-pending", "/verify-email",
+_UNVERIFIED_OK = {"/verify-pending", "/verify-otp",
                   "/account/resend-verification", "/account/logout"}
 
 
