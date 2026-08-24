@@ -27,12 +27,20 @@ def send(to: str, subject: str, body_text: str, body_html: str = "") -> bool:
     msg.set_content(body_text)
     if body_html:
         msg.add_alternative(body_html, subtype="html")
+    # TLS only for an external submission relay (port 465/587 or authenticated).
+    # A plain localhost relay (Exim on :25) must NOT use STARTTLS: its cert is
+    # for the server hostname, not "localhost", so verification fails and leaves
+    # the connection half-open -- which is why signup codes were silently lost.
+    use_tls = bool(MAIL_USER) or MAIL_PORT in (465, 587)
     try:
-        with smtplib.SMTP(MAIL_HOST, MAIL_PORT, timeout=15) as s:
-            try:
+        if MAIL_PORT == 465:
+            smtp = smtplib.SMTP_SSL(MAIL_HOST, MAIL_PORT, timeout=15,
+                                    context=ssl.create_default_context())
+        else:
+            smtp = smtplib.SMTP(MAIL_HOST, MAIL_PORT, timeout=15)
+        with smtp as s:
+            if use_tls and MAIL_PORT != 465:
                 s.starttls(context=ssl.create_default_context())
-            except Exception:  # noqa: BLE001 - plain localhost relay is fine
-                pass
             if MAIL_USER:
                 s.login(MAIL_USER, MAIL_PASS)
             s.send_message(msg)
