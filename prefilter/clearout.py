@@ -52,13 +52,46 @@ class Config:
     api_key: str = ""
     base_url: str = BASE_URL
     timeout: float = 40.0           # our own HTTP deadline, seconds
-    verify_timeout_ms: int = 25000  # how long Clearout may spend probing
+    verify_timeout_ms: int = 20000  # how long Clearout may spend probing
     concurrency: int = 8
     max_retries: int = 4
+    # Clearout's smaller plans allow 20-25 calls a minute. Pacing under that
+    # ceiling costs nothing; discovering it by being throttled costs latency on
+    # every call after the first. Raise it to match your plan. 0 disables.
+    max_rpm: int = 18
+
+    def __post_init__(self):
+        # Clearout's SMTP budget must fit inside our HTTP deadline. Invert the
+        # two and we hang up while the vendor is still working: the credit is
+        # spent and the answer is thrown away. Derived rather than validated,
+        # so the pair cannot be configured into that state at all.
+        floor = self.verify_timeout_ms / 1000.0 + 10.0
+        if self.timeout < floor:
+            self.timeout = floor
 
     @property
     def enabled(self) -> bool:
         return bool(self.api_key)
+
+
+class _RateGate:
+    """Spaces calls so we stay under the plan's ceiling by construction."""
+
+    def __init__(self, max_rpm: int):
+        self.interval = 60.0 / max_rpm if max_rpm and max_rpm > 0 else 0.0
+        self._lock = asyncio.Lock()
+        self._next = 0.0
+
+    async def wait(self) -> None:
+        if self.interval <= 0:
+            return
+        loop = asyncio.get_event_loop()
+        async with self._lock:
+            now = loop.time()
+            start = max(now, self._next)
+            self._next = start + self.interval
+        if start > now:
+            await asyncio.sleep(start - now)
 
 
 @dataclass
@@ -77,8 +110,12 @@ class VendorError(RuntimeError):
 
 
 def _headers(config: Config) -> Dict[str, str]:
+    # "Bearer:TOKEN" -- a colon, not a space. Clearout's own docs and the
+    # working client in the sibling GrapUp project both spell it this way.
+    # (The conventional "Bearer TOKEN" is also accepted today, but there is no
+    # reason to depend on that when the documented form costs nothing.)
     return {
-        "Authorization": "Bearer " + config.api_key,
+        "Authorization": "Bearer:" + config.api_key,
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
@@ -119,7 +156,7 @@ def _interpret(email: str, data: dict) -> VendorResult:
 
 
 async def _verify_one(session, email: str, config: Config,
-                      fatal: List[str]) -> VendorResult:
+                      fatal: List[str], gate: "_RateGate") -> VendorResult:
     """One instant-verify call, with backoff on throttling and 5xx.
 
     `fatal` is a shared one-slot list. The moment any worker hits a condition
@@ -140,6 +177,9 @@ async def _verify_one(session, email: str, config: Config,
     for _ in range(max(1, config.max_retries)):
         if fatal:
             return VendorResult(email, error=fatal[0])
+        # Retries pass through the gate too -- a throttled call that retries
+        # without pacing is how a rate limit turns into a rate war.
+        await gate.wait()
         try:
             async with session.post(url, data=payload, headers=_headers(config),
                                     timeout=timeout) as resp:
@@ -204,6 +244,7 @@ async def verify(emails: Sequence[str], config: Config,
         return []
 
     semaphore = asyncio.Semaphore(max(1, config.concurrency))
+    gate = _RateGate(config.max_rpm)
     fatal: List[str] = []
     done = [0]
     total = len(emails)
@@ -212,7 +253,7 @@ async def verify(emails: Sequence[str], config: Config,
     async with aiohttp.ClientSession(connector=connector) as session:
         async def worker(email: str) -> VendorResult:
             async with semaphore:
-                result = await _verify_one(session, email, config, fatal)
+                result = await _verify_one(session, email, config, fatal, gate)
                 done[0] += 1
                 if progress and (done[0] % 5 == 0 or done[0] == total):
                     progress(done[0], total)
@@ -245,7 +286,10 @@ async def credits(config: Config) -> dict:
     return {
         "available": body.get("available_credits", inner.get("available")),
         "total": inner.get("total"),
-        "daily_remaining": inner.get("available_daily_verify_limit"),
+        # The live API spells this "available_daily_limit"; older docs say
+        # "available_daily_verify_limit". Read whichever is present.
+        "daily_remaining": (inner.get("available_daily_limit")
+                            or inner.get("available_daily_verify_limit")),
         "error": "" if str(data.get("status") or "").lower() == "success"
                  else str(data.get("message") or "")[:120],
     }

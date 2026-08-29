@@ -65,6 +65,17 @@ quietly downgraded — a silent no looks exactly like a job that bought nothing.
 A rejected key or an empty balance mid-run is reported but does not fail the
 job: the other four tiers already did their work.
 
+Two vendor-side constraints are handled by construction rather than by
+discovering them:
+
+- **Rate.** Calls are paced under `CLEAROUT_MAX_RPM` instead of being fired at
+  full concurrency and backing off when throttled.
+- **Timeouts.** Clearout's own SMTP budget (`verify_timeout_ms`) is always kept
+  inside our HTTP deadline. Invert the two and we hang up while the vendor is
+  still working — the credit is spent and the answer is thrown away — so the
+  HTTP deadline is derived from the vendor budget and cannot be configured
+  into that state.
+
 ### The one design rule
 
 > An address is only marked **invalid** on positive proof. Everything uncertain
@@ -98,9 +109,14 @@ Then open <http://127.0.0.1:8000>.
 | `GLOBAL_SMTP_PER_HOUR` | `400` | Server-wide probe cap |
 | `USE_CACHE` | on | Serve repeat lookups from the verdict cache |
 | `BASE_URL` | `https://xomexo.com` | Used in verification/reset links |
-| `CLEAROUT_API_KEY` | — | Enables tier 4. Unset ⇒ the tier does not exist |
+| `CLEAROUT_API_KEY` | — | Enables tier 4. Unset ⇒ the tier does not exist. `CLEAROUT_API_TOKEN` (the name the sibling GrapUp project uses) is accepted too |
 | `CLEAROUT_THRESHOLD` | `90` | Confidence line — unproven addresses scored below it are the ones bought |
-| `CLEAROUT_CONCURRENCY` | `8` | Parallel calls to the Clearout API |
+| `CLEAROUT_CONCURRENCY` | `8` | Parallel calls in flight |
+| `CLEAROUT_MAX_RPM` | `18` | Per-minute ceiling. Clearout's smaller plans allow 20–25/min; raise to match yours |
+
+Secrets live in `app.env` (gitignored, `chmod 600`). systemd loads it via
+`EnvironmentFile=`; the app also reads it directly at startup, so a local run
+picks up the same file. Real environment variables always win over it.
 
 ### Deploying
 

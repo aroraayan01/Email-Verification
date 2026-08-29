@@ -26,6 +26,32 @@ from prefilter.engine import run as run_engine  # noqa: E402
 from webapp import auth                       # noqa: E402
 from webapp.jobs import DONE, FAILED, RUNNING, JobStore  # noqa: E402
 
+def _load_app_env() -> None:
+    """Read app.env into the environment, if it exists.
+
+    On the server systemd already does this via EnvironmentFile=, but a local
+    run (START.bat, uvicorn --reload) had no way to pick up secrets at all.
+    Real environment variables always win, so this can never override what the
+    service was actually started with.
+    """
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "app.env")
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, _, value = line.partition("=")
+                os.environ.setdefault(name.strip(), value.strip().strip('"\''))
+    except OSError:
+        pass
+
+
+_load_app_env()
+
 # Enable SMTP probing only where the sending IP is clean (i.e. the server).
 # Off by default so a laptop run never emits false rejections.
 ENABLE_SMTP = os.environ.get("ENABLE_SMTP", "").lower() in ("1", "true", "yes")
@@ -39,10 +65,16 @@ USE_CACHE = os.environ.get("USE_CACHE", "1").lower() in ("1", "true", "yes")
 # runs when the caller asks AND the account has been granted permission.
 # CLEAROUT_THRESHOLD is the confidence line: unproven addresses our own pattern
 # tier scores below it are the ones worth buying.
-CLEAROUT_API_KEY = os.environ.get("CLEAROUT_API_KEY", "").strip()
+# CLEAROUT_API_TOKEN is the name the sibling GrapUp project uses; accept both,
+# so a key copied between the two works without being renamed.
+CLEAROUT_API_KEY = (os.environ.get("CLEAROUT_API_KEY", "").strip()
+                    or os.environ.get("CLEAROUT_API_TOKEN", "").strip())
 CLEAROUT_THRESHOLD = max(0, min(100, int(
     os.environ.get("CLEAROUT_THRESHOLD", "90"))))
 CLEAROUT_CONCURRENCY = int(os.environ.get("CLEAROUT_CONCURRENCY", "8"))
+# Stay under the plan's per-minute ceiling by construction. Clearout's smaller
+# plans allow 20-25/min; this sits below that floor. Raise to match your plan.
+CLEAROUT_MAX_RPM = int(os.environ.get("CLEAROUT_MAX_RPM", "18"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "webdata")
@@ -135,7 +167,8 @@ def _clearout_config():
     if not CLEAROUT_API_KEY:
         return None
     from prefilter.clearout import Config
-    return Config(api_key=CLEAROUT_API_KEY, concurrency=CLEAROUT_CONCURRENCY)
+    return Config(api_key=CLEAROUT_API_KEY, concurrency=CLEAROUT_CONCURRENCY,
+                  max_rpm=CLEAROUT_MAX_RPM)
 
 
 def may_use_clearout(account) -> bool:
