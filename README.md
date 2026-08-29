@@ -18,7 +18,7 @@ rather than guessed at.
 | **Find** | Name + domain → the person's address |
 | **API** | Key-authenticated `verify` / `find` / `bulk` / `usage` |
 | **Accounts** | Signup, login, password reset, email verification, per-user quotas |
-| **Admin** | Users, plans, caps, enable/disable, activity log, CSV export |
+| **Admin** | Users, plans, caps, enable/disable, Clearout permission, credit balance, activity log, CSV export |
 
 ## How verification works
 
@@ -34,6 +34,36 @@ something is **proven**:
    catch-all servers. Needs a clean sending IP (see below).
 4. **Pattern** — for addresses nothing can settle, a clearly-labelled
    confidence score. Advisory only unless you opt in.
+5. **Clearout** — the paid tier, and the only one that costs money. Off unless
+   a key is configured, the caller asks, and the account has been granted
+   permission. See below.
+
+### Buying the tail (tier 4)
+
+The first four tiers resolve about half a B2B list for free and are honest that
+the rest is unprovable. Tier 4 buys an answer for the part that is *worth*
+buying: unproven addresses the pattern tier scores **below `CLEAROUT_THRESHOLD`
+(default 90%)**. Anything scored at or above the line is left alone — paying for
+a guess you already trust is the exact spend this engine exists to avoid.
+
+Every bought verdict is written to the verdict cache, so the same address is
+never purchased twice. A call that fails — throttling, a timeout, a rejected
+key — is *not* an answer: it stays in the review list rather than being cached
+as `unknown`, because banking a transport failure would lose the address and
+buy nothing.
+
+Three things must hold before a single credit is spent:
+
+| | |
+|---|---|
+| **Configured** | `CLEAROUT_API_KEY` is set on the server |
+| **Requested** | the upload asked for it — never automatic |
+| **Permitted** | an admin granted that account the permission (admins always have it) |
+
+A run that asks for tier 4 without the grant is refused outright, rather than
+quietly downgraded — a silent no looks exactly like a job that bought nothing.
+A rejected key or an empty balance mid-run is reported but does not fail the
+job: the other four tiers already did their work.
 
 ### The one design rule
 
@@ -68,6 +98,9 @@ Then open <http://127.0.0.1:8000>.
 | `GLOBAL_SMTP_PER_HOUR` | `400` | Server-wide probe cap |
 | `USE_CACHE` | on | Serve repeat lookups from the verdict cache |
 | `BASE_URL` | `https://xomexo.com` | Used in verification/reset links |
+| `CLEAROUT_API_KEY` | — | Enables tier 4. Unset ⇒ the tier does not exist |
+| `CLEAROUT_THRESHOLD` | `90` | Confidence line — unproven addresses scored below it are the ones bought |
+| `CLEAROUT_CONCURRENCY` | `8` | Parallel calls to the Clearout API |
 
 ### Deploying
 
@@ -122,12 +155,18 @@ anyone. Commercial services resolve those with accumulated cross-customer
 bounce history, which is a data asset rather than an algorithm. Those addresses
 are labelled `catch_all` and left for you to decide on.
 
+That data asset is precisely what tier 4 rents. Turning Clearout on does not
+make this engine able to read a catch-all domain — it buys the answer from
+someone who has the bounce history to guess well. The limit is unchanged; you
+are just choosing to pay for the part of the list that runs into it.
+
 ---
 
 ## Layout
 
 ```
 prefilter/    verification engine (routing, tiers, cache, finder)
+              clearout.py is tier 4 -- the only file that spends money
 webapp/       FastAPI app: UI, accounts, admin, public API
 server/       standalone SMTP prober for a remote host (Python 3.6 compatible)
 deploy/       install + reverse-proxy scripts

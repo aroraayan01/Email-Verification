@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS users (
     disabled     INTEGER NOT NULL DEFAULT 0,
     is_admin     INTEGER NOT NULL DEFAULT 0,
     verified     INTEGER NOT NULL DEFAULT 0,
+    -- May this account spend Clearout credits? Off for everyone by default;
+    -- the admin grants it per user. Admins always may.
+    can_clearout INTEGER NOT NULL DEFAULT 0,
     email_token  TEXT DEFAULT '',
     reset_token  TEXT DEFAULT '',
     reset_at     TEXT DEFAULT '',
@@ -94,7 +97,8 @@ class Users:
                     ("email_token_at", "TEXT DEFAULT ''"),
                     ("otp_tries", "INTEGER NOT NULL DEFAULT 0"),
                     ("reset_token", "TEXT DEFAULT ''"),
-                    ("reset_at", "TEXT DEFAULT ''")):
+                    ("reset_at", "TEXT DEFAULT ''"),
+                    ("can_clearout", "INTEGER NOT NULL DEFAULT 0")):
                 if name not in cols:
                     conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (name, ddl))
 
@@ -342,6 +346,12 @@ class Users:
         with self._conn() as conn:
             conn.execute("UPDATE users SET disabled = ? WHERE id = ?",
                          (1 if disabled else 0, user_id))
+
+    def set_clearout(self, user_id: int, allowed: bool) -> None:
+        """Grant or revoke permission to spend Clearout credits."""
+        with self._conn() as conn:
+            conn.execute("UPDATE users SET can_clearout = ? WHERE id = ?",
+                         (1 if allowed else 0, user_id))
 
     def set_verified(self, user_id: int) -> None:
         """Admin escape hatch: confirm an account by hand (e.g. if the

@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     counts      TEXT DEFAULT '{}',
     error       TEXT DEFAULT '',
     created_at  TEXT NOT NULL,
-    finished_at TEXT DEFAULT ''
+    finished_at TEXT DEFAULT '',
+    -- Clearout credits this job actually spent (tier 4).
+    credits_spent INTEGER DEFAULT 0
 );
 """
 
@@ -50,6 +52,11 @@ class JobStore:
         os.makedirs(results_dir, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            # Migrate job DBs created before tier 4 existed.
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)")]
+            if "credits_spent" not in cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN "
+                             "credits_spent INTEGER DEFAULT 0")
 
     def _conn(self):
         conn = sqlite3.connect(self.db_path, timeout=30)

@@ -35,6 +35,15 @@ SMTP_MAIL_FROM = os.environ.get("SMTP_MAIL_FROM", "")
 # Serve results from the verdict cache? Off => every check is fully live.
 USE_CACHE = os.environ.get("USE_CACHE", "1").lower() in ("1", "true", "yes")
 
+# Tier 4. Without a key the tier simply does not exist; with one it still only
+# runs when the caller asks AND the account has been granted permission.
+# CLEAROUT_THRESHOLD is the confidence line: unproven addresses our own pattern
+# tier scores below it are the ones worth buying.
+CLEAROUT_API_KEY = os.environ.get("CLEAROUT_API_KEY", "").strip()
+CLEAROUT_THRESHOLD = max(0, min(100, int(
+    os.environ.get("CLEAROUT_THRESHOLD", "90"))))
+CLEAROUT_CONCURRENCY = int(os.environ.get("CLEAROUT_CONCURRENCY", "8"))
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), "webdata")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -107,6 +116,7 @@ LOGIN_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 class VerifyRequest(BaseModel):
     email: str
     use_cache: bool = True
+    use_clearout: bool = False
 
 
 class FindRequest(BaseModel):
@@ -118,6 +128,26 @@ def _cache():
     # None disables caching -- the engine then does no lookups and no writes,
     # so every check is live.
     return Cache(CACHE_DB) if USE_CACHE else None
+
+
+def _clearout_config():
+    """Tier 4 config, or None when no key is configured."""
+    if not CLEAROUT_API_KEY:
+        return None
+    from prefilter.clearout import Config
+    return Config(api_key=CLEAROUT_API_KEY, concurrency=CLEAROUT_CONCURRENCY)
+
+
+def may_use_clearout(account) -> bool:
+    """Is this account allowed to spend credits?
+
+    Three things must all hold: the server has a key, the request came from a
+    real account, and that account was granted the permission. Admins always
+    have it -- it is their balance being spent.
+    """
+    if not CLEAROUT_API_KEY or not account:
+        return False
+    return bool(account.get("is_admin") or account.get("can_clearout"))
 
 
 # -------------------------------------------------------------- single ----
@@ -140,11 +170,15 @@ async def verify_one(req: VerifyRequest, request: Request):
         from prefilter.smtp_check import ProbeConfig
         smtp_config = ProbeConfig(helo=SMTP_HELO, mail_from=SMTP_MAIL_FROM)
 
+    use_vendor = bool(req.use_clearout) and may_use_clearout(account)
+
     cache = _cache()
     try:
-        verdicts, _report = await run_engine(
+        verdicts, report = await run_engine(
             [email], cache if req.use_cache else None, use_microsoft=True,
-            use_smtp=ENABLE_SMTP, smtp_config=smtp_config)
+            use_smtp=ENABLE_SMTP, smtp_config=smtp_config,
+            use_vendor=use_vendor, vendor_config=_clearout_config(),
+            vendor_threshold=CLEAROUT_THRESHOLD)
     finally:
         if cache: cache.close()
 
@@ -161,6 +195,8 @@ async def verify_one(req: VerifyRequest, request: Request):
         "reason": v.reason,
         "suggestion": v.suggestion,
         "billable": v.disposition == "to_vendor",
+        "credits_spent": report.vendor_billed,
+        "clearout_error": report.vendor_error,
     }
 
 
@@ -269,7 +305,8 @@ def _extract_emails(raw: bytes, filename: str):
     return [r[idx] for r in rows if idx < len(r) and _looks_like_email(r[idx])]
 
 
-async def _run_job(job_id: str, emails, pattern_threshold: int = 0):
+async def _run_job(job_id: str, emails, pattern_threshold: int = 0,
+                   use_vendor: bool = False):
     store.update(job_id, status=RUNNING, rows_in=len(emails))
     cache = _cache()
     try:
@@ -284,7 +321,9 @@ async def _run_job(job_id: str, emails, pattern_threshold: int = 0):
         verdicts, report = await run_engine(
             emails, cache, use_microsoft=True, use_smtp=ENABLE_SMTP,
             smtp_config=smtp_config, use_patterns=True,
-            pattern_threshold=pattern_threshold, log=lambda *_a: None,
+            pattern_threshold=pattern_threshold,
+            use_vendor=use_vendor, vendor_config=_clearout_config(),
+            vendor_threshold=CLEAROUT_THRESHOLD, log=lambda *_a: None,
             on_progress=on_progress)
         store.write_results(job_id, verdicts)
 
@@ -295,6 +334,10 @@ async def _run_job(job_id: str, emails, pattern_threshold: int = 0):
         store.update(job_id, status=DONE, stage="Finished",
                      unique_in=report.unique, resolved=report.siphoned,
                      billable=report.billable, counts=_json.dumps(counts),
+                     credits_spent=report.vendor_billed,
+                     # A tier-4 failure is not a job failure: everything else
+                     # still ran. Record it so the UI can say what happened.
+                     error=report.vendor_error or "",
                      finished_at=__import__("datetime").datetime.now(
                          __import__("datetime").timezone.utc
                      ).isoformat(timespec="seconds"))
@@ -305,8 +348,9 @@ async def _run_job(job_id: str, emails, pattern_threshold: int = 0):
 
 
 @app.post("/api/bulk")
-async def bulk(background: BackgroundTasks, file: UploadFile = File(...),
-               threshold: int = 0):
+async def bulk(request: Request, background: BackgroundTasks,
+               file: UploadFile = File(...), threshold: int = 0,
+               clearout: bool = False):
     raw = await file.read()
     if len(raw) > 25 * 1024 * 1024:
         raise HTTPException(413, "file too large (max 25 MB)")
@@ -320,6 +364,19 @@ async def bulk(background: BackgroundTasks, file: UploadFile = File(...),
         raise HTTPException(400, "no email addresses found in that file")
 
     threshold = max(0, min(100, int(threshold)))
+
+    # Spending money is opt-in AND permissioned. A request that asks for tier 4
+    # without the grant is refused outright rather than quietly downgraded --
+    # a silent no would look like a finished job with nothing bought.
+    use_vendor = False
+    if clearout:
+        from webapp.api import current_account
+        if not may_use_clearout(current_account(request)):
+            raise HTTPException(
+                403, "this account is not allowed to use Clearout"
+                     if CLEAROUT_API_KEY else "Clearout is not configured")
+        use_vendor = True
+
     job_id = store.create(file.filename or "list.csv")
     # Keep the user's original columns so the download can echo them back.
     store.write_source(job_id, header, rows, email_idx)
@@ -327,8 +384,8 @@ async def bulk(background: BackgroundTasks, file: UploadFile = File(...),
     # Pass the coroutine FUNCTION, not a coroutine object -- FastAPI inspects
     # it and awaits async callables on the loop. Handing it a sync callable
     # would run it in a worker thread with no event loop.
-    background.add_task(_run_job, job_id, emails, threshold)
-    return {"job_id": job_id, "found": len(emails)}
+    background.add_task(_run_job, job_id, emails, threshold, use_vendor)
+    return {"job_id": job_id, "found": len(emails), "clearout": use_vendor}
 
 
 def _extract_name_domain(raw: bytes, filename: str):
@@ -502,7 +559,10 @@ async def me(request: Request):
     used = account["used_today"] if account["quota_date"] == _today() else 0
     return {"email": account["email"], "plan": account["plan"],
             "used_today": used, "daily_quota": account["daily_quota"],
-            "is_admin": bool(account["is_admin"]), "verified": bool(account["verified"])}
+            "is_admin": bool(account["is_admin"]),
+            "verified": bool(account["verified"]),
+            "can_clearout": may_use_clearout(account),
+            "clearout_threshold": CLEAROUT_THRESHOLD}
 
 
 @app.get("/api/stats")
@@ -538,7 +598,8 @@ def _finder_module():
 
 public_api.configure(run_engine=run_engine, finder=__import__(
     "prefilter.finder", fromlist=["find"]), cache_factory=_cache,
-    smtp_config_factory=_smtp_config_factory, enable_smtp=ENABLE_SMTP)
+    smtp_config_factory=_smtp_config_factory, enable_smtp=ENABLE_SMTP,
+    clearout_config_factory=_clearout_config)
 app.include_router(public_api.router)
 
 # Seed the owner's admin account from env (ADMIN_EMAIL + APP_PASSWORD).

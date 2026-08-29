@@ -9,7 +9,10 @@ moment a tier can prove its verdict; anything unproven falls through.
                      reputation, runs anywhere. ~48% of a B2B list.
     3. smtp       -- per-domain baseline probing. Needs a clean sending IP,
                      so it runs on the server, never a residential connection.
-    4. vendor     -- everything still unproven goes to Clearout.
+    4. vendor     -- everything still unproven, and below the confidence line,
+                     is bought from Clearout. Off unless a key is configured
+                     and the caller asks for it: the only tier that spends
+                     money is never the one that runs by default.
 
 The governing rule, unchanged from tier 0 to tier 4: an address is only marked
 invalid on positive proof. When this engine is wrong it must be wrong in the
@@ -56,6 +59,8 @@ class EngineReport:
     by_tier: Counter = field(default_factory=Counter)
     by_route: Counter = field(default_factory=Counter)
     by_status: Counter = field(default_factory=Counter)
+    vendor_billed: int = 0        # addresses that actually cost a credit
+    vendor_error: str = ""        # why tier 4 stopped early, if it did
 
     @property
     def siphoned(self) -> int:
@@ -95,6 +100,8 @@ async def run(emails: Sequence[str], cache: Optional[Cache] = None,
               use_smtp: bool = False, smtp_config=None,
               nameservers: Optional[List[str]] = None,
               use_patterns: bool = True, pattern_threshold: int = 0,
+              use_vendor: bool = False, vendor_config=None,
+              vendor_threshold: int = 90,
               log=print, on_progress=None
               ) -> Tuple[List[Verdict], EngineReport]:
     """Run every tier. on_progress(stage, done, total) drives the web UI."""
@@ -288,6 +295,59 @@ async def run(emails: Sequence[str], cache: Optional[Cache] = None,
                     local, domain = email.rsplit("@", 1)
                     cache.learn_shape(domain, patterns.local_shape(local))
                 cache.commit()
+
+    # -- tier 4: Clearout, for what is still unproven and under the line ----
+    # The confidence line is the whole point. An address our own pattern tier
+    # rates at or above `vendor_threshold` is left alone -- paying for a guess
+    # we already trust is exactly the spend this engine exists to avoid. It is
+    # everything BELOW the line, plus anything patterns never scored, that is
+    # worth a credit.
+    if use_vendor and vendor_config is not None:
+        from . import clearout
+
+        targets = [v for v in verdicts
+                   if v.disposition == TO_VENDOR and v.canonical
+                   and (v.confidence is None or v.confidence < vendor_threshold)]
+        # Two rows sharing one address must not be bought twice.
+        by_email = {}
+        for verdict in targets:
+            by_email.setdefault(verdict.canonical, verdict)
+
+        if by_email:
+            log("  tier4 clearout   : buying %d addresses under %d%% ..."
+                % (len(by_email), vendor_threshold))
+            progress("Verifying with Clearout", 0, len(by_email))
+            try:
+                results = await clearout.verify(
+                    list(by_email), vendor_config,
+                    progress=lambda d, t: progress("Verifying with Clearout", d, t))
+            except clearout.VendorError as exc:
+                # A rejected key or an empty balance. Everything stays
+                # TO_VENDOR and exportable, exactly as if the tier were off.
+                report.vendor_error = str(exc)
+                results = []
+                log("  tier4 clearout   : skipped -- %s" % exc)
+
+            for result in results:
+                verdict = by_email.get(result.email)
+                if verdict is None:
+                    continue
+                if not result.billed:
+                    # No credit spent, so no verdict to bank. Leave it in the
+                    # review list rather than inventing an answer.
+                    verdict.reason = "Clearout unavailable: %s" % result.error
+                    if not report.vendor_error:
+                        report.vendor_error = result.error
+                    continue
+                verdict.status = result.status
+                verdict.disposition = SIPHONED
+                verdict.tier = "clearout"
+                verdict.reason = result.detail
+                verdict.confidence = None   # a bought verdict is not a guess
+                report.vendor_billed += 1
+
+            log("  tier4 clearout   : %d bought (%d unanswered)"
+                % (report.vendor_billed, len(by_email) - report.vendor_billed))
 
     # -- tally --------------------------------------------------------------
     for verdict in verdicts:

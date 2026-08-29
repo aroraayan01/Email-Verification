@@ -296,6 +296,7 @@ async function upload(file) {
   const body = new FormData();
   body.append("file", file);
   const thresh = parseInt(threshold.value, 10) || 0;
+  const co = $("#useClearout")?.checked ? 1 : 0;
   $("#jobPanel").classList.remove("hidden");
   $("#resultsPanel").classList.add("hidden");
   $("#jobSummary").classList.add("hidden");
@@ -307,7 +308,8 @@ async function upload(file) {
   $("#jobStage").textContent = "Uploading…";
 
   try {
-    const res = await fetch(`/api/bulk?threshold=${thresh}`, { method: "POST", body });
+    const res = await fetch(`/api/bulk?threshold=${thresh}&clearout=${co}`,
+                            { method: "POST", body });
     const d = await res.json();
     if (!res.ok) throw new Error(d.detail || "upload failed");
     currentJob = d.job_id;
@@ -333,8 +335,13 @@ async function pollJob() {
   $("#jobStatus").className = "pill " + j.status;
   const pct = j.total ? Math.round((j.done / j.total) * 100) : (j.status === "done" ? 100 : 8);
   $("#jobBar").style.width = pct + "%";
+  let finished = "Finished.";
+  if (j.credits_spent) finished += ` ${j.credits_spent} Clearout credit${j.credits_spent === 1 ? "" : "s"} spent.`;
+  // A done job can still carry a tier-4 complaint (bad key, no balance): the
+  // rest of the list verified fine, so say so rather than calling it a failure.
+  if (j.status === "done" && j.error) finished += ` Clearout: ${j.error}`;
   $("#jobStage").textContent =
-    j.status === "done" ? "Finished."
+    j.status === "done" ? finished
     : j.status === "failed" ? j.error || "Failed."
     : `${j.stage || "Working"}${j.total ? ` — ${j.done}/${j.total}` : "…"}`;
 
@@ -456,6 +463,12 @@ async function loadStats() {
   try {
     const d = await (await fetch("/api/me")).json();
     if (d.email && $("#acctEmail")) $("#acctEmail").textContent = d.email;
+    // The Clearout control exists only for accounts granted the permission --
+    // there is no point offering a spend the server will refuse.
+    if (d.can_clearout && $("#clearoutRow")) {
+      $("#clearoutRow").classList.remove("hidden");
+      if ($("#clearoutLine")) $("#clearoutLine").textContent = d.clearout_threshold ?? 90;
+    }
     if ($("#qUsed")) {
       $("#qUsed").textContent = (d.used_today ?? 0).toLocaleString();
       $("#qTotal").textContent = "/ " + (d.daily_quota ?? 0).toLocaleString();

@@ -43,9 +43,10 @@ _engine = {}
 
 
 def configure(run_engine, finder, cache_factory, smtp_config_factory,
-              enable_smtp):
+              enable_smtp, clearout_config_factory=None):
     _engine.update(run=run_engine, finder=finder, cache=cache_factory,
-                   smtp=smtp_config_factory, enable_smtp=enable_smtp)
+                   smtp=smtp_config_factory, enable_smtp=enable_smtp,
+                   clearout=clearout_config_factory or (lambda: None))
 
 
 # ----------------------------------------------------------- helpers ------
@@ -568,6 +569,8 @@ async def admin_panel(request: Request):
             badges += ' <span class="pill invalid">disabled</span>'
         if not u["verified"]:
             badges += ' <span class="pill unknown">unverified</span>'
+        if u.get("can_clearout"):
+            badges += ' <span class="pill catch_all">clearout</span>'
         opts = "".join("<option value='%s'%s>%s</option>"
                        % (pl, " selected" if u["plan"] == pl else "", pl.title())
                        for pl in ("free", "pro", "business"))
@@ -581,6 +584,9 @@ async def admin_panel(request: Request):
             "<button class='copy-btn'>Set</button></form></td>"
             "<td style='display:flex;gap:5px'>"
             "%s"
+            "<form method='post' action='/admin/user/%d/clearout'>"
+            "<button class='copy-btn' title='Let this account spend Clearout "
+            "credits'>%s</button></form>"
             "<form method='post' action='/admin/user/%d/toggle'>"
             "<button class='copy-btn'>%s</button></form></td></tr>"
             % (u["id"], u["email"], badges, "{:,}".format(u["used_today"]),
@@ -589,6 +595,7 @@ async def admin_panel(request: Request):
                ("" if u["verified"] else
                 "<form method='post' action='/admin/user/%d/verify'>"
                 "<button class='copy-btn'>Verify</button></form>" % u["id"]),
+               u["id"], "− Clearout" if u.get("can_clearout") else "+ Clearout",
                u["id"], "Enable" if u["disabled"] else "Disable"))
 
     qrows = ""
@@ -601,10 +608,26 @@ async def admin_panel(request: Request):
                      result.split()[0] if result else "", result or "—",
                      q["via"], q["kind"]))
 
+    # Clearout balance. Shown only when a key is configured, and never allowed
+    # to break the page -- an admin locked out of user management because the
+    # vendor is down would be a bad trade.
+    credits_tile = ""
+    config = _engine.get("clearout", lambda: None)()
+    if config is not None:
+        from prefilter import clearout as _clearout
+        bal = await _clearout.credits(config)
+        available = bal.get("available")
+        credits_tile = (
+            '<div class="stat"><span>%s</span>'
+            '<label>Clearout credits</label></div>'
+            % ("{:,}".format(available) if isinstance(available, int)
+               else "—"))
+
     body = """<div class="summary" style="margin-top:0">
   <div class="stat"><span>{users_n}</span><label>users</label></div>
   <div class="stat"><span>{checks}</span><label>all-time checks</label></div>
   <div class="stat"><span>{today}</span><label>searches today</label></div>
+  {credits_tile}
 </div>
 
 <h3 style="margin:28px 0 12px;font-size:15px">Activity — last 14 days</h3>
@@ -622,6 +645,7 @@ async def admin_panel(request: Request):
 <tbody>{qrows}</tbody></table></div>""".format(
         users_n="{:,}".format(st["users"]), checks="{:,}".format(st["total_checks"]),
         today="{:,}".format(st["today"]), chart=_bar_chart(users.daily_usage(14)),
+        credits_tile=credits_tile,
         rows=rows or "<tr><td colspan='6' class='muted'>No users yet</td></tr>",
         qrows=qrows or "<tr><td colspan='6' class='muted'>No searches yet</td></tr>")
     return HTMLResponse(shell.page("Admin", admin, body, active="admin", wide=True))
@@ -753,4 +777,15 @@ async def admin_verify(uid: int, request: Request):
     if _require_admin(request) is None:
         return RedirectResponse("/account", 302)
     users.set_verified(uid)
+    return RedirectResponse("/admin", 302)
+
+
+@router.post("/admin/user/{uid}/clearout")
+async def admin_toggle_clearout(uid: int, request: Request):
+    """Grant or revoke a user's permission to spend Clearout credits."""
+    if _require_admin(request) is None:
+        return RedirectResponse("/account", 302)
+    u = _user_by_id(uid)
+    if u:
+        users.set_clearout(uid, not u.get("can_clearout"))
     return RedirectResponse("/admin", 302)
