@@ -96,19 +96,36 @@ if os.path.exists(v):
 PYEOF
 fi
 
-# --- 6. the two secrets worth carrying across ------------------------------
-echo
-echo "== from the old app.env -- paste these into $APP_DIR/app.env =="
-echo "   (APP_SECRET keeps existing login sessions valid; without it everyone"
-echo "    is simply logged out once, which is harmless.)"
-ssh "$REMOTE" "grep -E '^(APP_SECRET|CLEAROUT_API_KEY|APP_PASSWORD)=' '$REMOTE_DIR/app.env' || true"
-
-# --- 7. restart ------------------------------------------------------------
+# --- 6. restart FIRST ------------------------------------------------------
+# Before anything else that can fail. The data is already copied; leaving the
+# service down because a later, purely informational step errored would turn a
+# successful migration into an outage. (It did: repeated ssh logins can trip
+# the old host's brute-force protection, and the timeout killed the script
+# under `set -e` with the service still stopped.)
 if [ "$WAS_RUNNING" -eq 1 ]; then
   systemctl start "$SERVICE"
   sleep 2
   systemctl is-active --quiet "$SERVICE" && echo "== $SERVICE running ==" \
     || { echo "!! failed to start:"; journalctl -u "$SERVICE" -n 20 --no-pager; }
+fi
+
+# --- 7. the two secrets worth carrying across ------------------------------
+# Best-effort: this is a convenience, not part of the migration. Every failure
+# mode is swallowed so it can never take the service down -- if it can't
+# connect, it tells you how to read them by hand instead.
+echo
+echo "== from the old app.env -- paste these into $APP_DIR/app.env =="
+echo "   (APP_SECRET keeps existing login sessions valid; without it everyone"
+echo "    is simply logged out once, which is harmless.)"
+if ! ssh -o ConnectTimeout=15 "$REMOTE" \
+      "grep -E '^(APP_SECRET|CLEAROUT_API_KEY)=' '$REMOTE_DIR/app.env'" 2>/dev/null
+then
+  echo
+  echo "   !! couldn't read them over ssh (the old host may have rate-limited"
+  echo "      this IP after the earlier logins -- check cPHulk / fail2ban)."
+  echo "      Run this in the OLD server's own terminal and copy the output:"
+  echo
+  echo "        grep -E '^(APP_SECRET|CLEAROUT_API_KEY)=' $REMOTE_DIR/app.env"
 fi
 
 echo
