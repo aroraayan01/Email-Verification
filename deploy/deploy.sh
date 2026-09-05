@@ -13,6 +13,21 @@
 # again without deleting app.env or webdata.
 set -euo pipefail
 
+# The `git reset --hard` below rewrites THIS FILE while bash is still reading
+# it, and bash reads a script lazily by byte offset -- so once deploy.sh itself
+# starts changing between releases, an update can leave bash executing whatever
+# happens to sit at the offset it had reached. Harmless while the file never
+# changed; a corrupt half-deploy the first time it does.
+#
+# Re-exec from a private copy, so the file on disk is free to change under us.
+if [ -z "${DEPLOY_FROM_COPY:-}" ]; then
+  _copy="$(mktemp /tmp/deploy.XXXXXX.sh)"
+  cat "$0" > "$_copy"
+  trap 'rm -f "$_copy"' EXIT
+  DEPLOY_FROM_COPY=1 bash "$_copy" "$@"
+  exit $?
+fi
+
 APP_DIR="${APP_DIR:-/opt/email-verifier}"
 REPO="${REPO:-https://github.com/aroraayan01/Email-Verification.git}"
 BRANCH="${BRANCH:-main}"
@@ -34,14 +49,32 @@ if [ ! -d .git ]; then
   # Point HEAD at the remote branch and overwrite ONLY tracked files.
   # app.env, webdata/, .venv/ are untracked and stay put.
   git reset --hard "origin/$BRANCH"
-  git branch -q -M "$BRANCH" 2>/dev/null || true
-  git branch -q --set-upstream-to "origin/$BRANCH" "$BRANCH" 2>/dev/null || true
 else
   echo "== fetching latest =="
   git remote set-url origin "$REPO"
   git fetch --depth 1 origin "$BRANCH"
   git reset --hard "origin/$BRANCH"
 fi
+
+# Normalise the branch on EVERY run, not just the first.
+#
+# `git init` starts on whatever the local default is -- usually `master` -- and
+# `git branch -M` can fail quietly there on older git, leaving a branch that is
+# neither named after the remote nor tracking it. deploy.sh itself doesn't care
+# (it fetches and resets by full ref), but a plain `git pull` then fails with
+# "no tracking information", which is a confusing thing to hit by hand. Fixing
+# it here means an already-broken checkout heals the next time this runs.
+CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+if [ "$CURRENT" != "$BRANCH" ]; then
+  echo "== renaming branch '$CURRENT' -> '$BRANCH' =="
+  git branch -f "$BRANCH" "origin/$BRANCH"
+  git symbolic-ref HEAD "refs/heads/$BRANCH"
+  git reset --hard "origin/$BRANCH"
+  # Drop the stale default branch, but never the one we just moved onto.
+  [ "$CURRENT" != "HEAD" ] && [ "$CURRENT" != "$BRANCH" ] && \
+    git branch -D "$CURRENT" >/dev/null 2>&1 || true
+fi
+git branch --set-upstream-to "origin/$BRANCH" "$BRANCH" >/dev/null 2>&1 || true
 
 echo "== now at: $(git log --oneline -1) =="
 
