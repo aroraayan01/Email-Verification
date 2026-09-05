@@ -1,7 +1,7 @@
 """Send transactional email (verification links) via the local mail server.
 
 Uses plain SMTP to localhost -- on the cPanel box, Exim accepts it and relays.
-Deliverability to Gmail/Outlook depends on xomexo.com having SPF/DKIM set (cPanel
+Deliverability to Gmail/Outlook depends on inboxx.work having SPF/DKIM set (cPanel
 usually configures these for hosted domains). Sending failures never block
 signup: the account is still created, the user just re-requests the link.
 """
@@ -13,16 +13,16 @@ from email.message import EmailMessage
 
 MAIL_HOST = os.environ.get("MAIL_HOST", "localhost")
 MAIL_PORT = int(os.environ.get("MAIL_PORT", "25"))
-MAIL_FROM = os.environ.get("MAIL_FROM", "no-reply@xomexo.com")
+MAIL_FROM = os.environ.get("MAIL_FROM", "no-reply@inboxx.work")
 MAIL_USER = os.environ.get("MAIL_USER", "")
 MAIL_PASS = os.environ.get("MAIL_PASS", "")
-BASE_URL = os.environ.get("BASE_URL", "https://xomexo.com")
+BASE_URL = os.environ.get("BASE_URL", "https://inboxx.work")
 
 
 def send(to: str, subject: str, body_text: str, body_html: str = "") -> bool:
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = "Xomexo <%s>" % MAIL_FROM
+    msg["From"] = "Inboxx <%s>" % MAIL_FROM
     msg["To"] = to
     msg.set_content(body_text)
     if body_html:
@@ -51,7 +51,7 @@ def send(to: str, subject: str, body_text: str, body_html: str = "") -> bool:
 
 def send_reset(to: str, token: str) -> bool:
     link = "%s/reset?token=%s" % (BASE_URL, token)
-    text = ("Reset your Xomexo password:\n%s\n\n"
+    text = ("Reset your Inboxx password:\n%s\n\n"
             "This link expires in 1 hour. If you didn't ask for it, ignore "
             "this message." % link)
     html = ("""<div style="font-family:sans-serif;max-width:480px;margin:auto">
@@ -62,22 +62,22 @@ border-radius:8px;text-decoration:none;display:inline-block">Reset password</a><
 <p style="color:#666;font-size:13px">Or paste this link: %s</p>
 <p style="color:#999;font-size:12px">Didn't ask for this? Ignore it.</p></div>"""
             % (link, link))
-    return send(to, "Reset your Xomexo password", text, html)
+    return send(to, "Reset your Inboxx password", text, html)
 
 
 def send_verification(to: str, code: str) -> bool:
     """Email the signup confirmation code (OTP)."""
-    text = ("Welcome to Xomexo!\n\n"
+    text = ("Welcome to Inboxx!\n\n"
             "Your verification code is: %s\n\n"
             "Enter it on the confirmation page to activate your account. "
             "The code expires in 15 minutes.\n\n"
             "If you didn't sign up, ignore this message." % code)
     html = ("""<div style="font-family:sans-serif;max-width:460px;margin:auto;text-align:center">
 <h2 style="margin-bottom:4px">Confirm your email</h2>
-<p style="color:#555">Enter this code to finish setting up your Xomexo account.</p>
+<p style="color:#555">Enter this code to finish setting up your Inboxx account.</p>
 <div style="font-size:34px;font-weight:700;letter-spacing:10px;margin:22px 0;
 padding:16px;background:#f2f5fb;border-radius:12px;color:#1f2937">%s</div>
 <p style="color:#999;font-size:13px">The code expires in 15 minutes.
 If you didn't sign up, ignore this email.</p></div>"""
             % code)
-    return send(to, "Your Xomexo verification code: %s" % code, text, html)
+    return send(to, "Your Inboxx verification code: %s" % code, text, html)

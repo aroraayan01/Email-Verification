@@ -1,7 +1,7 @@
-# Deploying to xomexo.com
+# Deploying to inboxx.work
 
 Three pastes into WHM Terminal, in order. Each is safe: everything is isolated
-to `/opt/email-verifier` and the `xomexo.com` vhost. Nothing touches your other
+to `/opt/email-verifier` and the `inboxx.work` vhost. Nothing touches your other
 sites or the system Python.
 
 ## Step 1 — deliver the code
@@ -18,14 +18,14 @@ This fetches an isolated Python 3.11 (via `uv`), installs dependencies, and
 starts the service on `127.0.0.1:8000`. It prints your **login password** at the
 end — copy it. (~2–4 minutes.)
 
-## Step 3 — point xomexo.com at it
+## Step 3 — point inboxx.work at it
 ```bash
 bash /opt/email-verifier/deploy/setup_proxy.sh
 ```
-Wires Apache so `https://xomexo.com` serves the app.
+Wires Apache so `https://inboxx.work` serves the app.
 
 ## Done
-Open **https://xomexo.com**, log in with the printed password.
+Open **https://inboxx.work**, log in with the printed password.
 
 The SMTP tier is ON here (the server IP is clean), so private-domain and Gmail
 addresses get real checks instead of guesses.
@@ -70,3 +70,65 @@ The first time you run it, it converts the existing `/opt/email-verifier`
 tarball install into a git checkout in place (data preserved) — no manual steps.
 The base64 paste flow (`paste_update.txt`) still works as a fallback if the
 server ever can't reach GitHub.
+
+---
+
+## Moving to a new domain
+
+Done once, when the product moves address (this is how `xomexo.com` became
+`inboxx.work`). Order matters: DNS and the certificate have to be in place
+before the app starts sending links that point at the new name.
+
+**1. Registrar** — point the domain at the server:
+
+```
+A    inboxx.work       134.195.138.179
+A    www.inboxx.work   134.195.138.179
+```
+
+**2. cPanel** — add the domain to the `grapme` account (Addon or Parked), then
+let AutoSSL issue a certificate for it. Wait until `https://` on the new domain
+loads *anything* without a certificate warning before continuing.
+
+**3. Rename the admin account** *before* restarting, so the app finds the
+existing row instead of seeding a second admin next to it:
+
+```bash
+/opt/email-verifier/.venv/bin/python -c "import sqlite3;c=sqlite3.connect('/opt/email-verifier/webdata/users.sqlite3');c.execute(\"UPDATE users SET email='admin@inboxx.work' WHERE email='admin@xomexo.com'\");c.commit();print('renamed')"
+```
+
+**4. `app.env`** — three lines, so links in signup and reset emails point at the
+new name:
+
+```
+BASE_URL=https://inboxx.work
+MAIL_FROM=no-reply@inboxx.work
+ADMIN_EMAIL=admin@inboxx.work
+```
+
+**5. Mail authentication.** The new domain needs its own SPF and DKIM records
+(cPanel → Email Deliverability → Repair). Skip this and every verification code
+and password-reset mail lands in spam — the app will look broken to anyone
+signing up, and nothing in the logs will say why.
+
+**6. Wire the new domain, then retire the old one:**
+
+```bash
+bash /opt/email-verifier/deploy/setup_proxy.sh inboxx.work
+```
+
+```bash
+bash /opt/email-verifier/deploy/deploy.sh
+```
+
+Check `https://inboxx.work` works — sign in, and send yourself a password reset
+to confirm the mail path — *then*:
+
+```bash
+bash /opt/email-verifier/deploy/retire_domain.sh xomexo.com
+```
+
+`retire_domain.sh` only removes that domain's proxy include; its DNS and
+certificate are untouched, and `setup_proxy.sh xomexo.com` puts it straight
+back. Anything still pointing at the old host — bookmarks, saved API base
+URLs — stops working at that moment, so retire it last.

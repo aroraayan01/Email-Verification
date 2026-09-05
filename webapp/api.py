@@ -475,7 +475,7 @@ async def reset_submit(request: Request):
 @router.get("/account", response_class=HTMLResponse)
 async def account_page(err: str = ""):
     note = ('<p class="err">%s</p>' % err.replace("+", " ")) if err else ""
-    inner = ("""<h1>Sign in to Xomexo</h1>
+    inner = ("""<h1>Sign in to Inboxx</h1>
 <p class="sub">Free account &middot; 100 checks a day &middot; no card</p>{note}
 <form method="post" action="/account/login">
 <input type="email" name="email" placeholder="you@company.com" required>
@@ -529,7 +529,7 @@ async def dashboard(request: Request):
 <div class="panel" style="margin-top:0">{chart}</div>
 
 <h3 style="margin:28px 0 12px;font-size:15px">Quick start</h3>
-<div class="table-wrap"><pre style="padding:16px;margin:0;overflow-x:auto;font-size:12.8px">curl -X POST https://xomexo.com/api/v1/verify \
+<div class="table-wrap"><pre style="padding:16px;margin:0;overflow-x:auto;font-size:12.8px">curl -X POST https://inboxx.work/api/v1/verify \
   -H "X-API-Key: {key}" \
   -H "Content-Type: application/json" \
   -d '{{"email":"someone@company.com"}}'</pre></div>
@@ -716,7 +716,7 @@ async def export_history(request: Request):
     from fastapi.responses import Response
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition":
-                             'attachment; filename="xomexo-history.csv"'})
+                             'attachment; filename="inboxx-history.csv"'})
 
 
 @router.get("/admin/export.csv")
@@ -736,7 +736,7 @@ async def admin_export(request: Request):
     from fastapi.responses import Response
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition":
-                             'attachment; filename="xomexo-all-activity.csv"'})
+                             'attachment; filename="inboxx-all-activity.csv"'})
 
 
 @router.post("/admin/user/{uid}/plan")

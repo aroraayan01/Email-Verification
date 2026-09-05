@@ -636,7 +636,7 @@ public_api.configure(run_engine=run_engine, finder=__import__(
 app.include_router(public_api.router)
 
 # Seed the owner's admin account from env (ADMIN_EMAIL + APP_PASSWORD).
-_ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@xomexo.com")
+_ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@inboxx.work")
 if os.environ.get("APP_PASSWORD"):
     public_api.users.seed_admin(_ADMIN_EMAIL, os.environ["APP_PASSWORD"])
 

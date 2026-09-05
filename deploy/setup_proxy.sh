@@ -1,13 +1,16 @@
 #!/bin/bash
-# Points xomexo.com at the local Email Verifier service via Apache reverse
-# proxy, using cPanel's per-domain include mechanism. This only adds config
-# for xomexo.com -- no other domain or vhost is touched.
+# Points a domain at the local Email Verifier service via Apache reverse
+# proxy, using cPanel's per-domain include mechanism. Only the named domain
+# gets config -- no other domain or vhost is touched.
 #
-#     bash deploy/setup_proxy.sh
+#     bash deploy/setup_proxy.sh                 # the default, inboxx.work
+#     bash deploy/setup_proxy.sh staging.inboxx.work
+#
+# To stop serving a domain again, see retire_domain.sh.
 set -euo pipefail
 
-USER=grapme
-DOMAIN=xomexo.com
+USER="${USER_CPANEL:-grapme}"
+DOMAIN="${1:-${DOMAIN:-inboxx.work}}"
 PORT="${PORT:-8000}"
 
 echo "== wiring $DOMAIN -> 127.0.0.1:$PORT =="

@@ -1,5 +1,5 @@
 #!/bin/bash
-# One-command update for the Xomexo verifier on the server.
+# One-command update for the Inboxx verifier on the server.
 #
 #     bash /opt/email-verifier/deploy/deploy.sh
 #
@@ -18,7 +18,7 @@ REPO="${REPO:-https://github.com/aroraayan01/Email-Verification.git}"
 BRANCH="${BRANCH:-main}"
 SERVICE="${SERVICE:-email-verifier}"
 
-echo "== Xomexo deploy =="
+echo "== Inboxx deploy =="
 echo "   dir:    $APP_DIR"
 echo "   repo:   $REPO ($BRANCH)"
 

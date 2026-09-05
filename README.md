@@ -1,4 +1,4 @@
-# Xomexo — Email Verification & Finder
+# Inboxx — Email Verification & Finder
 
 A self-hosted email verification service: verify addresses, find them from a
 name and a domain, clean lists in bulk, and expose it all over an API — with a
@@ -100,7 +100,7 @@ Then open <http://127.0.0.1:8000>.
 | Variable | Default | Purpose |
 |---|---|---|
 | `APP_PASSWORD` | — | Seeds the admin account's password |
-| `ADMIN_EMAIL` | `admin@xomexo.com` | Admin account address |
+| `ADMIN_EMAIL` | `admin@inboxx.work` | Admin account address |
 | `APP_SECRET` | random | Signs session cookies |
 | `ENABLE_SMTP` | off | Enable the SMTP probing tier |
 | `SMTP_HELO` | `localhost` | HELO name — must be a real FQDN with forward-confirmed rDNS |
@@ -108,7 +108,7 @@ Then open <http://127.0.0.1:8000>.
 | `PUBLIC_SMTP` | off | Let API users trigger SMTP probing |
 | `GLOBAL_SMTP_PER_HOUR` | `400` | Server-wide probe cap |
 | `USE_CACHE` | on | Serve repeat lookups from the verdict cache |
-| `BASE_URL` | `https://xomexo.com` | Used in verification/reset links |
+| `BASE_URL` | `https://inboxx.work` | Used in verification/reset links |
 | `CLEAROUT_API_KEY` | — | Enables tier 4. Unset ⇒ the tier does not exist. `CLEAROUT_API_TOKEN` (the name the sibling GrapUp project uses) is accepted too |
 | `CLEAROUT_THRESHOLD` | `90` | Confidence line — unproven addresses scored below it are the ones bought |
 | `CLEAROUT_CONCURRENCY` | `8` | Parallel calls in flight |

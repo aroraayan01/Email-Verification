@@ -52,7 +52,7 @@ def sidebar(account: dict, active: str = "") -> str:
 
     return """
 <aside class="sidebar" id="sidebar">
-  <a class="side-brand" href="/app"><span class="logo">{mark}</span>Xomexo</a>
+  <a class="side-brand" href="/app"><span class="logo">{mark}</span>Inboxx</a>
 
   <div class="quota-box">
     <div class="lbl">Daily quota</div>
@@ -95,7 +95,7 @@ def page(title: str, account: dict, body: str, active: str = "",
     """A full signed-in page: shared <head>, sidebar, header, and body."""
     return """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — Xomexo</title>
+<title>{title} — Inboxx</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%231f6feb'/><path d='M28 52l16 16 30-32' stroke='white' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <link rel="stylesheet" href="/static/app.css">
 </head><body>
@@ -140,13 +140,13 @@ def public_page(title: str, body: str, active: str = "") -> str:
             href, ' class="on"' if active == key else "", label)
     return """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — Xomexo</title>
+<title>{title} — Inboxx</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%231f6feb'/><path d='M28 52l16 16 30-32' stroke='white' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <link rel="stylesheet" href="/static/app.css">
 <link rel="stylesheet" href="/static/public.css">
 </head><body class="pub">
 <header class="pub-nav">
-  <a class="pub-brand" href="/"><span class="logo">{mark}</span>Xomexo</a>
+  <a class="pub-brand" href="/"><span class="logo">{mark}</span>Inboxx</a>
   <nav class="pub-links">{home}{pricing}{docs}</nav>
   <div class="pub-cta"><a href="/account" class="btn">Sign in</a></div>
 </header>
@@ -154,7 +154,7 @@ def public_page(title: str, body: str, active: str = "") -> str:
 {body}
 </main>
 <footer class="pub-foot">
-  <span>&copy; Xomexo</span>
+  <span>&copy; Inboxx</span>
   <a href="/pricing">Pricing</a><a href="/docs-api">API docs</a><a href="/account">Sign in</a>
 </footer>
 <script>

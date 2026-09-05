@@ -91,5 +91,5 @@ if [ -n "$GENERATED_PW" ]; then
   echo "  Login password:  $GENERATED_PW"
   echo "  (change later by editing $ENV_FILE then: systemctl restart email-verifier)"
 fi
-echo "  Next: bash deploy/setup_proxy.sh   to point xomexo.com at it"
+echo "  Next: bash deploy/setup_proxy.sh   to point inboxx.work at it"
 echo "==================================================================="
