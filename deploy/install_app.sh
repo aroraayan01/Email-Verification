@@ -40,14 +40,41 @@ if [ ! -f "$ENV_FILE" ]; then
   else
     PW="$(head -c18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c14)"
   fi
+  # The HELO name must be THIS host, and that host must have forward-confirmed
+  # reverse DNS. Guessed from the system hostname; override with SMTP_HELO=.
+  HELO="${SMTP_HELO:-$(hostname -f 2>/dev/null || hostname)}"
+
+  # SMTP starts OFF on a fresh install, deliberately. Probing from an IP
+  # without forward-confirmed rDNS earns real rejections that look exactly
+  # like dead mailboxes -- the one error this engine must never make. Confirm
+  # the PTR record first (see STEPS.md), then set ENABLE_SMTP=1.
+  SMTP_DEFAULT="${ENABLE_SMTP:-0}"
+
+  DOMAIN_DEFAULT="${SITE_DOMAIN:-inboxx.work}"
+
   cat > "$ENV_FILE" <<EOF
 APP_PASSWORD=$PW
 APP_SECRET=$SECRET
-ENABLE_SMTP=1
-SMTP_HELO=srv.tradegeniusglobal.com
+
+# --- SMTP tier (tier 3) ---
+# 0 until this host's PTR record is confirmed. See STEPS.md.
+ENABLE_SMTP=$SMTP_DEFAULT
+SMTP_HELO=$HELO
 SMTP_MAIL_FROM=
-USE_CACHE=0
+
+# --- site ---
 PORT=$PORT
+BASE_URL=https://$DOMAIN_DEFAULT
+MAIL_FROM=no-reply@$DOMAIN_DEFAULT
+ADMIN_EMAIL=admin@$DOMAIN_DEFAULT
+
+# --- verdict cache ---
+# On: paid Clearout verdicts (tier 4) are banked and never re-bought.
+USE_CACHE=1
+
+# --- Clearout (tier 4) ---
+# Paste the key here to enable it. Empty = the tier does not exist.
+CLEAROUT_API_KEY=
 EOF
   chmod 600 "$ENV_FILE"
   echo "== wrote $ENV_FILE =="

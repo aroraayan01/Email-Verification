@@ -73,62 +73,115 @@ server ever can't reach GitHub.
 
 ---
 
-## Moving to a new domain
+## Moving to a new server
 
-Done once, when the product moves address (this is how `xomexo.com` became
-`inboxx.work`). Order matters: DNS and the certificate have to be in place
-before the app starts sending links that point at the new name.
+This is the `xomexo.com` → `inboxx.work` move: a different box, a different
+cPanel account, a different IP. The new domain already resolves to the new
+server, so there is no DNS change — the work is standing the app up there and
+carrying across what git does not track.
 
-**1. Registrar** — point the domain at the server:
+**Do this first, in parallel with everything else: get a PTR record.**
+Ask the host to set reverse DNS for the new IP to a hostname you control (e.g.
+`srv.inboxx.work`), and add a matching `A` record for it. Tier 3 refuses to
+run honestly without it — probing from an IP with no forward-confirmed rDNS
+earns rejections that look exactly like dead mailboxes, which is the one error
+this engine must never make. `install_app.sh` therefore ships `ENABLE_SMTP=0`;
+turn it on only once this resolves:
 
+```bash
+dig +short -x <new-ip>          # must return your hostname
+dig +short <that-hostname>      # must return <new-ip>
 ```
-A    inboxx.work       134.195.138.179
-A    www.inboxx.work   134.195.138.179
+
+Everything below works regardless; only tier 3 waits.
+
+### On the new server (WHM Terminal)
+
+**1. Install the app.**
+
+```bash
+mkdir -p /opt/email-verifier && cd /opt/email-verifier
 ```
 
-**2. cPanel** — add the domain to the `grapme` account (Addon or Parked), then
-let AutoSSL issue a certificate for it. Wait until `https://` on the new domain
-loads *anything* without a certificate warning before continuing.
+```bash
+git clone https://github.com/aroraayan01/Email-Verification.git .
+```
 
-**3. Rename the admin account** *before* restarting, so the app finds the
-existing row instead of seeding a second admin next to it:
+```bash
+bash deploy/install_app.sh
+```
+
+It fetches an isolated Python 3.11, installs dependencies, writes a fresh
+`app.env` (SMTP off, cache on, domain set to `inboxx.work`) and starts the
+service on `127.0.0.1:8000`. Copy the password it prints.
+
+**2. Carry the data across.** Code comes from git; this moves what git cannot
+— accounts, API keys, activity, and the verdict cache *including every Clearout
+verdict already paid for*:
+
+```bash
+bash deploy/migrate_from.sh root@134.195.138.179
+```
+
+It backs up whatever is already here, stops the service for the copy, restarts
+it, reports what came over, and prints the two secrets worth carrying from the
+old `app.env` (`APP_SECRET`, `CLEAROUT_API_KEY`).
+
+**3. Paste those two into `app.env`**, plus check `PORT` and the domain lines:
+
+```bash
+nano /opt/email-verifier/app.env
+```
+
+```bash
+systemctl restart email-verifier
+```
+
+**4. Point the domain at it** — use this server's cPanel username, not
+`grapme`:
+
+```bash
+USER_CPANEL=<new-cpanel-user> bash /opt/email-verifier/deploy/setup_proxy.sh inboxx.work
+```
+
+Then let AutoSSL issue a certificate for `inboxx.work` in WHM.
+
+**5. Rename the admin account** so `ADMIN_EMAIL` matches the row that came
+over, rather than seeding a second admin beside it:
 
 ```bash
 /opt/email-verifier/.venv/bin/python -c "import sqlite3;c=sqlite3.connect('/opt/email-verifier/webdata/users.sqlite3');c.execute(\"UPDATE users SET email='admin@inboxx.work' WHERE email='admin@xomexo.com'\");c.commit();print('renamed')"
 ```
 
-**4. `app.env`** — three lines, so links in signup and reset emails point at the
-new name:
+**6. Mail authentication.** The new domain needs its own SPF and DKIM records
+on this server (cPanel → Email Deliverability → Repair). Skip this and every
+verification code and password-reset mail lands in spam — the app will look
+broken to anyone signing up, and nothing in the logs will say why.
 
-```
-BASE_URL=https://inboxx.work
-MAIL_FROM=no-reply@inboxx.work
-ADMIN_EMAIL=admin@inboxx.work
-```
+### Verify before cutting over
 
-**5. Mail authentication.** The new domain needs its own SPF and DKIM records
-(cPanel → Email Deliverability → Repair). Skip this and every verification code
-and password-reset mail lands in spam — the app will look broken to anyone
-signing up, and nothing in the logs will say why.
+On the new server, in this order:
 
-**6. Wire the new domain, then retire the old one:**
+1. `https://inboxx.work` loads the app (not a placeholder, no cert warning).
+2. Sign in as `admin@inboxx.work` with the old password.
+3. `/admin` shows your users **and** the Clearout credit balance — that one
+   number proves the key, the cache and the vendor tier all survived.
+4. Send yourself a password reset and confirm it arrives, not in spam.
+5. Verify one address end to end.
 
-```bash
-bash /opt/email-verifier/deploy/setup_proxy.sh inboxx.work
-```
+### Only then, retire the old server
 
-```bash
-bash /opt/email-verifier/deploy/deploy.sh
-```
-
-Check `https://inboxx.work` works — sign in, and send yourself a password reset
-to confirm the mail path — *then*:
+On the **old** server:
 
 ```bash
 bash /opt/email-verifier/deploy/retire_domain.sh xomexo.com
 ```
 
-`retire_domain.sh` only removes that domain's proxy include; its DNS and
-certificate are untouched, and `setup_proxy.sh xomexo.com` puts it straight
-back. Anything still pointing at the old host — bookmarks, saved API base
-URLs — stops working at that moment, so retire it last.
+That removes only the proxy include; DNS and the certificate are untouched, and
+`setup_proxy.sh xomexo.com` puts it straight back. Leave the old service
+running and the data in place for a week or so before decommissioning — it is
+the only copy of anything the migration silently missed.
+
+Once tier 3's PTR record resolves on the new host, set `ENABLE_SMTP=1` in
+`app.env` and restart. Confirm with a handful of known-good and known-bad
+addresses before trusting a full list from the new IP.
