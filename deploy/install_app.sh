@@ -28,7 +28,11 @@ echo "== uv: $UV =="
 # --- 2. isolated Python 3.11 + venv + deps ---------------------------------
 cd "$APP_DIR"
 echo "== creating venv with Python 3.11 (uv fetches it if missing) =="
-"$UV" venv --python 3.11 .venv
+# --clear, because without it uv stops and ASKS when a .venv already exists --
+# which hangs the script forever on a re-run, and a re-run is the normal case
+# after a failed first attempt. Nothing of value lives in .venv: it is rebuilt
+# from requirements.txt on the next line, and the app's data is in webdata/.
+"$UV" venv --clear --python 3.11 .venv
 echo "== installing dependencies =="
 VIRTUAL_ENV="$APP_DIR/.venv" "$UV" pip install -r requirements.txt
 
