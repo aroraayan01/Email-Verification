@@ -46,6 +46,17 @@ CREATE TABLE IF NOT EXISTS counters (
     count       INTEGER NOT NULL DEFAULT 0
 );
 
+-- Credits this deployment has spent, per named Clearout pool. Clearout's own
+-- dashboard reports per-token usage; this is the same number from our side,
+-- so a pool's spend can be read without leaving the app -- and so a mismatch
+-- between the two is visible at all.
+CREATE TABLE IF NOT EXISTS clearout_spend (
+    key_name   TEXT PRIMARY KEY,
+    credits    INTEGER NOT NULL DEFAULT 0,
+    runs       INTEGER NOT NULL DEFAULT 0,
+    last_spent TEXT NOT NULL DEFAULT ''
+);
+
 -- Every check/find a user runs, for the admin's audit view.
 CREATE TABLE IF NOT EXISTS queries (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -346,6 +357,28 @@ class Users:
         with self._conn() as conn:
             conn.execute("UPDATE users SET disabled = ? WHERE id = ?",
                          (1 if disabled else 0, user_id))
+
+    def record_clearout_spend(self, key_name: str, credits: int) -> None:
+        """Add credits spent against a named pool. No-op for zero."""
+        if not key_name or credits <= 0:
+            return
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO clearout_spend (key_name, credits, runs, last_spent)
+                   VALUES (?,?,1,?)
+                   ON CONFLICT(key_name) DO UPDATE SET
+                       credits    = credits + excluded.credits,
+                       runs       = runs + 1,
+                       last_spent = excluded.last_spent""",
+                (key_name.lower(), int(credits),
+                 _now().isoformat(timespec="seconds")))
+
+    def clearout_spend(self) -> dict:
+        """{name: {credits, runs, last_spent}} for every pool spent from."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM clearout_spend").fetchall()
+        return {r["key_name"]: {"credits": r["credits"], "runs": r["runs"],
+                                "last_spent": r["last_spent"]} for r in rows}
 
     def set_clearout(self, user_id: int, allowed: bool) -> None:
         """Grant or revoke permission to spend Clearout credits."""

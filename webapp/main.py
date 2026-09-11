@@ -65,10 +65,57 @@ USE_CACHE = os.environ.get("USE_CACHE", "1").lower() in ("1", "true", "yes")
 # runs when the caller asks AND the account has been granted permission.
 # CLEAROUT_THRESHOLD is the confidence line: unproven addresses our own pattern
 # tier scores below it are the ones worth buying.
-# CLEAROUT_API_TOKEN is the name the sibling GrapUp project uses; accept both,
-# so a key copied between the two works without being renamed.
-CLEAROUT_API_KEY = (os.environ.get("CLEAROUT_API_KEY", "").strip()
-                    or os.environ.get("CLEAROUT_API_TOKEN", "").strip())
+#
+# Keys are NAMED, one pool per project:
+#
+#     CLEAROUT_KEY_INBOXX=...
+#     CLEAROUT_KEY_GRAPUP=...
+#     CLEAROUT_ACTIVE=inboxx
+#
+# Only the active one is ever spent; the others are configured so the admin
+# console can show every pool's balance side by side. That is the whole point
+# of naming them -- one shared token across projects gives a single number
+# nobody can attribute, and no way to tell ordinary usage from a surprise.
+#
+# CLEAROUT_API_KEY (and CLEAROUT_API_TOKEN, the name the sibling GrapUp project
+# uses) still work and register as a key named "default", so an existing
+# app.env keeps working untouched.
+
+
+def _read_clearout_keys():
+    """Every configured key, as {name: token}. Names are lowercased."""
+    keys = {}
+    legacy = (os.environ.get("CLEAROUT_API_KEY", "").strip()
+              or os.environ.get("CLEAROUT_API_TOKEN", "").strip())
+    if legacy:
+        keys["default"] = legacy
+    for var, value in os.environ.items():
+        if var.startswith("CLEAROUT_KEY_") and value.strip():
+            name = var[len("CLEAROUT_KEY_"):].strip().lower()
+            if name:
+                keys[name] = value.strip()
+    return keys
+
+
+def _pick_active(keys):
+    """Which named key this deployment spends.
+
+    Explicit CLEAROUT_ACTIVE wins. Otherwise: the only key, if there is
+    exactly one -- naming a single key should not also require selecting it.
+    With several and no choice made, spend NOTHING rather than guess, because
+    guessing here spends someone's money.
+    """
+    wanted = os.environ.get("CLEAROUT_ACTIVE", "").strip().lower()
+    if wanted:
+        return wanted if wanted in keys else ""
+    if len(keys) == 1:
+        return next(iter(keys))
+    return ""
+
+
+CLEAROUT_KEYS = _read_clearout_keys()
+CLEAROUT_ACTIVE = _pick_active(CLEAROUT_KEYS)
+CLEAROUT_API_KEY = CLEAROUT_KEYS.get(CLEAROUT_ACTIVE, "")
 CLEAROUT_THRESHOLD = max(0, min(100, int(
     os.environ.get("CLEAROUT_THRESHOLD", "90"))))
 CLEAROUT_CONCURRENCY = int(os.environ.get("CLEAROUT_CONCURRENCY", "8"))
@@ -162,13 +209,28 @@ def _cache():
     return Cache(CACHE_DB) if USE_CACHE else None
 
 
-def _clearout_config():
-    """Tier 4 config, or None when no key is configured."""
-    if not CLEAROUT_API_KEY:
-        return None
+def _clearout_config(name: str = ""):
+    """Config for a named key, or the active one. None if not configured.
+
+    Passing a name reads that pool WITHOUT making it spendable -- the admin
+    console uses it for balances. Only the active key is ever handed to the
+    engine.
+    """
     from prefilter.clearout import Config
-    return Config(api_key=CLEAROUT_API_KEY, concurrency=CLEAROUT_CONCURRENCY,
+    key = CLEAROUT_KEYS.get(name.lower()) if name else CLEAROUT_API_KEY
+    if not key:
+        return None
+    return Config(api_key=key, concurrency=CLEAROUT_CONCURRENCY,
                   max_rpm=CLEAROUT_MAX_RPM)
+
+
+def clearout_key_names():
+    """Configured pool names, active one first."""
+    names = sorted(CLEAROUT_KEYS)
+    if CLEAROUT_ACTIVE in names:
+        names.remove(CLEAROUT_ACTIVE)
+        names.insert(0, CLEAROUT_ACTIVE)
+    return names
 
 
 def may_use_clearout(account) -> bool:
@@ -218,6 +280,7 @@ async def verify_one(req: VerifyRequest, request: Request):
     v = verdicts[0]
     if account:
         _users.log_query(account["id"], "verify", email, v.status, "web")
+    _users.record_clearout_spend(CLEAROUT_ACTIVE, report.vendor_billed)
     return {
         "email": v.email,
         "status": v.status,
@@ -359,6 +422,12 @@ async def _run_job(job_id: str, emails, pattern_threshold: int = 0,
             vendor_threshold=CLEAROUT_THRESHOLD, log=lambda *_a: None,
             on_progress=on_progress)
         store.write_results(job_id, verdicts)
+
+        # Bank the spend against the pool it came out of, before anything
+        # below can fail -- an untracked credit is worse than an unwritten
+        # count, because the money is gone either way.
+        from webapp.api import users as _users
+        _users.record_clearout_spend(CLEAROUT_ACTIVE, report.vendor_billed)
 
         import json as _json
         counts = {}
@@ -632,7 +701,9 @@ def _finder_module():
 public_api.configure(run_engine=run_engine, finder=__import__(
     "prefilter.finder", fromlist=["find"]), cache_factory=_cache,
     smtp_config_factory=_smtp_config_factory, enable_smtp=ENABLE_SMTP,
-    clearout_config_factory=_clearout_config)
+    clearout_config_factory=_clearout_config,
+    clearout_names=clearout_key_names,
+    clearout_active=lambda: CLEAROUT_ACTIVE)
 app.include_router(public_api.router)
 
 # Seed the owner's admin account from env (ADMIN_EMAIL + APP_PASSWORD).

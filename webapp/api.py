@@ -43,10 +43,13 @@ _engine = {}
 
 
 def configure(run_engine, finder, cache_factory, smtp_config_factory,
-              enable_smtp, clearout_config_factory=None):
+              enable_smtp, clearout_config_factory=None,
+              clearout_names=None, clearout_active=None):
     _engine.update(run=run_engine, finder=finder, cache=cache_factory,
                    smtp=smtp_config_factory, enable_smtp=enable_smtp,
-                   clearout=clearout_config_factory or (lambda: None))
+                   clearout=clearout_config_factory or (lambda *_a: None),
+                   clearout_names=clearout_names or (lambda: []),
+                   clearout_active=clearout_active or (lambda: ""))
 
 
 # ----------------------------------------------------------- helpers ------
@@ -608,20 +611,67 @@ async def admin_panel(request: Request):
                      result.split()[0] if result else "", result or "—",
                      q["via"], q["kind"]))
 
-    # Clearout balance. Shown only when a key is configured, and never allowed
-    # to break the page -- an admin locked out of user management because the
-    # vendor is down would be a bad trade.
+    # Clearout pools. Every configured key's live balance, plus what THIS
+    # deployment has spent against it -- the two numbers that let you tell a
+    # project's own usage from someone else's. Never allowed to break the
+    # page: an admin locked out of user management because the vendor is down
+    # would be a bad trade.
     credits_tile = ""
-    config = _engine.get("clearout", lambda: None)()
-    if config is not None:
+    pools_html = ""
+    names = _engine.get("clearout_names", lambda: [])()
+    if names:
+        import asyncio as _asyncio
+
         from prefilter import clearout as _clearout
-        bal = await _clearout.credits(config)
-        available = bal.get("available")
-        credits_tile = (
-            '<div class="stat"><span>%s</span>'
-            '<label>Clearout credits</label></div>'
-            % ("{:,}".format(available) if isinstance(available, int)
-               else "—"))
+        factory = _engine.get("clearout", lambda _n="": None)
+        active = _engine.get("clearout_active", lambda: "")()
+        spend = users.clearout_spend()
+
+        configs = [(n, factory(n)) for n in names]
+        balances = await _asyncio.gather(
+            *(_clearout.credits(c) for _n, c in configs if c is not None))
+
+        # NOT `rows` -- that name already holds the user table built above,
+        # and reusing it here silently rendered pools into the Users table.
+        pool_rows = ""
+        for (name, config), bal in zip(
+                [(n, c) for n, c in configs if c is not None], balances):
+            available = bal.get("available")
+            used = spend.get(name, {})
+            is_active = (name == active)
+            pool_rows += (
+                "<tr><td><b>%s</b>%s</td><td>%s</td><td>%s</td>"
+                "<td class='muted'>%s</td><td class='muted'>%s</td></tr>"
+                % (name,
+                   " <span class='pill valid'>active</span>" if is_active
+                   else " <span class='pill unknown'>idle</span>",
+                   "{:,}".format(available) if isinstance(available, int)
+                   else "<span class='muted'>%s</span>" % (bal.get("error") or "—"),
+                   "{:,}".format(used.get("credits", 0)),
+                   used.get("runs", 0),
+                   (used.get("last_spent") or "—")[:16].replace("T", " ")))
+
+        pools_html = (
+            '<h3 style="margin:28px 0 12px;font-size:15px">Clearout pools</h3>'
+            '<div class="table-wrap"><table><thead><tr><th>Pool</th>'
+            '<th>Credits left</th><th>Spent here</th><th>Runs</th>'
+            '<th>Last spend</th></tr></thead><tbody>%s</tbody></table></div>'
+            '<p class="muted" style="margin-top:8px">"Spent here" is what this '
+            'deployment bought. A gap between that and the balance is usage '
+            'from elsewhere &mdash; another project sharing the same key.</p>'
+            % pool_rows)
+
+        # The headline tile stays the ACTIVE pool -- the one being spent.
+        active_bal = next((b for (n, _c), b in zip(
+            [(n, c) for n, c in configs if c is not None], balances)
+            if n == active), None)
+        if active_bal is not None:
+            available = active_bal.get("available")
+            credits_tile = (
+                '<div class="stat"><span>%s</span>'
+                '<label>Clearout credits (%s)</label></div>'
+                % ("{:,}".format(available) if isinstance(available, int)
+                   else "—", active))
 
     body = """<div class="summary" style="margin-top:0">
   <div class="stat"><span>{users_n}</span><label>users</label></div>
@@ -632,6 +682,8 @@ async def admin_panel(request: Request):
 
 <h3 style="margin:28px 0 12px;font-size:15px">Activity — last 14 days</h3>
 <div class="panel" style="margin-top:0">{chart}</div>
+
+{pools_html}
 
 <h3 style="margin:28px 0 12px;font-size:15px">Users</h3>
 <div class="table-wrap"><table>
@@ -645,7 +697,7 @@ async def admin_panel(request: Request):
 <tbody>{qrows}</tbody></table></div>""".format(
         users_n="{:,}".format(st["users"]), checks="{:,}".format(st["total_checks"]),
         today="{:,}".format(st["today"]), chart=_bar_chart(users.daily_usage(14)),
-        credits_tile=credits_tile,
+        credits_tile=credits_tile, pools_html=pools_html,
         rows=rows or "<tr><td colspan='6' class='muted'>No users yet</td></tr>",
         qrows=qrows or "<tr><td colspan='6' class='muted'>No searches yet</td></tr>")
     return HTMLResponse(shell.page("Admin", admin, body, active="admin", wide=True))

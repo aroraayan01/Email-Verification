@@ -56,7 +56,7 @@ Three things must hold before a single credit is spent:
 
 | | |
 |---|---|
-| **Configured** | `CLEAROUT_API_KEY` is set on the server |
+| **Configured** | a named key is set, and selected as active |
 | **Requested** | the upload asked for it — never automatic |
 | **Permitted** | an admin granted that account the permission (admins always have it) |
 
@@ -64,6 +64,30 @@ A run that asks for tier 4 without the grant is refused outright, rather than
 quietly downgraded — a silent no looks exactly like a job that bought nothing.
 A rejected key or an empty balance mid-run is reported but does not fail the
 job: the other four tiers already did their work.
+
+### Named credit pools
+
+Keys are named, one pool per project, so spend can be attributed:
+
+```
+CLEAROUT_KEY_INBOXX=...
+CLEAROUT_KEY_GRAPUP=...
+CLEAROUT_ACTIVE=inboxx
+```
+
+Only the active pool is ever spent. The others are configured so `/admin` can
+show every pool's live balance beside **what this deployment has bought from
+it** — the two numbers that separate your own usage from someone else's. One
+token shared across projects gives a single figure nobody can attribute, which
+makes ordinary usage and a surprise look identical.
+
+Selecting is deliberate rather than clever: with one pool configured it is
+chosen automatically, but with several and no `CLEAROUT_ACTIVE`, tier 4 stays
+**off**. Guessing which pool to spend from is guessing whose money to spend.
+Likewise, a `CLEAROUT_ACTIVE` naming a pool that does not exist disables the
+tier rather than falling back to another one.
+
+`CLEAROUT_API_KEY` still works and registers as a pool named `default`.
 
 Two vendor-side constraints are handled by construction rather than by
 discovering them:
@@ -109,7 +133,9 @@ Then open <http://127.0.0.1:8000>.
 | `GLOBAL_SMTP_PER_HOUR` | `400` | Server-wide probe cap |
 | `USE_CACHE` | on | Serve repeat lookups from the verdict cache |
 | `BASE_URL` | `https://inboxx.work` | Used in verification/reset links |
-| `CLEAROUT_API_KEY` | — | Enables tier 4. Unset ⇒ the tier does not exist. `CLEAROUT_API_TOKEN` (the name the sibling GrapUp project uses) is accepted too |
+| `CLEAROUT_KEY_<NAME>` | — | A named credit pool, one per project (`CLEAROUT_KEY_INBOXX=…`). Enables tier 4 |
+| `CLEAROUT_ACTIVE` | — | Which pool this deployment spends. Optional when only one is configured |
+| `CLEAROUT_API_KEY` | — | Legacy single key; registers as a pool named `default`. `CLEAROUT_API_TOKEN` also accepted |
 | `CLEAROUT_THRESHOLD` | `90` | Confidence line — unproven addresses scored below it are the ones bought |
 | `CLEAROUT_CONCURRENCY` | `8` | Parallel calls in flight |
 | `CLEAROUT_MAX_RPM` | `18` | Per-minute ceiling. Clearout's smaller plans allow 20–25/min; raise to match yours |
