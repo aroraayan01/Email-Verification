@@ -184,6 +184,31 @@ curl -X POST https://your-host/api/v1/verify \
 Endpoints: `POST /api/v1/verify`, `POST /api/v1/find`, `POST /api/v1/bulk`
 (≤1000 per call), `GET /api/v1/usage`.
 
+### Several keys per account
+
+An account can hold as many API keys as it likes, each named — one per place
+it is used. Create and revoke them on the dashboard:
+
+```
+Name        Key            Calls    Last used
+default     ev_kea5T3W…    1,204    2026-09-11 09:10
+website     ev_9Qm2xLp…      318    2026-09-11 08:44
+crm-sync    ev_Vd1z8Kr…    5,902    2026-09-10 22:31
+```
+
+Every key spends the same account quota — they separate *attribution*, not
+budget. What they buy you is being able to see which integration is doing the
+work, and to pull one key without breaking the others: revoking `website`
+leaves `crm-sync` running. The activity log records the key by name, so a call
+shows as `api:crm-sync` rather than a bare `api`.
+
+Revoking never deletes the row, so retiring a key does not erase the record of
+what it did. The last remaining key can't be revoked — an account with none
+has no way back in through the UI.
+
+Existing keys are unaffected: on upgrade each account's original key is adopted
+under the name `default` and keeps working.
+
 Statuses: `valid`, `invalid`, `catch_all`, `unknown`.
 Errors: `401` bad key, `429` quota exhausted, `413` batch too large.
 

@@ -97,6 +97,12 @@ def _api_user(api_key: str) -> dict:
     return user
 
 
+def _via(user: dict) -> str:
+    """Activity-log source: which named key made this call, not just "api"."""
+    name = (user or {}).get("_key_name") or ""
+    return ("api:" + name)[:40] if name else "api"
+
+
 def _bar_chart(data, w=320, h=120) -> str:
     """Inline SVG bar chart from [(label, value)] -- no external library."""
     max_v = max((v for _, v in data), default=0) or 1
@@ -149,7 +155,7 @@ async def v1_verify(body: V1Verify, authorization: str = Header(default=""),
                   and users.bump_counter("smtp_global", GLOBAL_SMTP_PER_HOUR, 3600))
     email = (body.email or "").strip()
     v = await _run_one(email, allow_smtp)
-    users.log_query(user["id"], "verify", email, v.status, "api")
+    users.log_query(user["id"], "verify", email, v.status, _via(user))
     return {
         "email": v.email, "status": v.status, "confidence": v.confidence,
         "checked_by": v.tier or "vendor", "reason": v.reason,
@@ -179,7 +185,7 @@ async def v1_find(body: V1Find, authorization: str = Header(default=""),
             cache.close()
     users.log_query(user["id"], "find",
                     "%s @ %s" % ((body.name or "").strip(), (body.domain or "").strip()),
-                    r.status, "api")
+                    r.status, _via(user))
     return {"email": r.email, "status": r.status, "confidence": r.confidence,
             "quota_remaining": remaining}
 
@@ -219,7 +225,7 @@ async def v1_bulk(body: V1Bulk, authorization: str = Header(default=""),
             cache.close()
 
     users.log_query(user["id"], "bulk", "%d addresses" % len(emails),
-                    "%d resolved" % report.siphoned, "api")
+                    "%d resolved" % report.siphoned, _via(user))
     return {
         "count": len(verdicts),
         "resolved": report.siphoned,
@@ -370,6 +376,32 @@ async def account_rotate(request: Request):
     return RedirectResponse("/dashboard", 302)
 
 
+@router.post("/account/keys/new")
+async def account_key_new(request: Request):
+    """Mint another named key for this account."""
+    user = _current_account(request)
+    if user is None:
+        return RedirectResponse("/account", 302)
+    form = await request.form()
+    users.create_api_key(user["id"], form.get("name") or "")
+    return RedirectResponse("/dashboard", 302)
+
+
+@router.post("/account/keys/{key_id}/revoke")
+async def account_key_revoke(key_id: int, request: Request):
+    """Revoke one key. Scoped to the owner, so a guessed id from another
+    account revokes nothing."""
+    user = _current_account(request)
+    if user is None:
+        return RedirectResponse("/account", 302)
+    keys = users.list_api_keys(user["id"])
+    # Refuse to remove the last working key: an account with none can no
+    # longer call the API at all, and the UI gives no way back.
+    if len(keys) > 1:
+        users.revoke_api_key(user["id"], key_id)
+    return RedirectResponse("/dashboard", 302)
+
+
 @router.get("/pricing", response_class=HTMLResponse)
 async def pricing():
     plans = [
@@ -512,13 +544,34 @@ async def dashboard(request: Request):
                   "style='display:inline;margin-left:auto'>"
                   "<button class='copy-btn'>Resend link</button></form></div>")
 
+    # One key per place you use the API, so usage is attributable and a key
+    # can be pulled without disturbing anything else.
+    key_rows = ""
+    for k in users.list_api_keys(user["id"]):
+        key_rows += (
+            "<tr><td><b>%s</b></td>"
+            "<td><code class='keycell'>%s</code>"
+            "<button class='copy-btn' onclick=\"navigator.clipboard.writeText('%s')\">Copy</button></td>"
+            "<td>%s</td><td class='muted'>%s</td>"
+            "<td><form method='post' action='/account/keys/%d/revoke' "
+            "onsubmit=\"return confirm('Revoke &quot;%s&quot;? Anything using this key stops working immediately.')\">"
+            "<button class='copy-btn'>Revoke</button></form></td></tr>"
+            % (k["name"], k["api_key"], k["api_key"], "{:,}".format(k["calls"]),
+               (k["last_used"] or "never")[:16].replace("T", " "),
+               k["id"], k["name"]))
+
     body = """{banner}
-<p class="sub">Use this key with the API. Keep it secret — anyone with it can spend your quota.</p>
-<div class="found-email">{key}
-  <button class="copy-btn" onclick="navigator.clipboard.writeText('{key}')">Copy</button>
-</div>
-<form method="post" action="/account/rotate" style="margin:0 0 26px">
-  <button class="btn ghost" type="submit">Regenerate key</button>
+<p class="sub">One key per place you use the API — a separate key for each site or
+script means you can see what each one costs you, and pull a single key without
+breaking the rest. Keep them secret: anyone with a key can spend your quota.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Name</th><th>Key</th><th>Calls</th><th>Last used</th><th></th></tr></thead>
+<tbody>{key_rows}</tbody></table></div>
+
+<form method="post" action="/account/keys/new" class="newkey-form">
+  <input name="name" placeholder="Name it — e.g. website, crm-sync" maxlength="40" required>
+  <button class="btn" type="submit">Create key</button>
 </form>
 
 <div class="summary" style="margin-top:0">
@@ -540,7 +593,8 @@ async def dashboard(request: Request):
   <a href="/docs-api">Full API docs</a> &middot;
   <a href="/account/history.csv">Export my history (CSV)</a> &middot;
   <a href="/pricing">Upgrade plan</a></p>""".format(
-        banner=banner, key=user["api_key"], used="{:,}".format(used),
+        banner=banner, key=user["api_key"], key_rows=key_rows,
+        used="{:,}".format(used),
         quota="{:,}".format(user["daily_quota"]),
         total="{:,}".format(user["total_checks"]), plan=user["plan"].title(),
         chart=_bar_chart(users.daily_usage(14, user_id=user["id"])))

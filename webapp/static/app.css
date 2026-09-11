@@ -280,6 +280,15 @@ td.why { color: var(--muted); max-width: 320px; }
   font-size: 13px; color: var(--muted); }
 .clearout-key select { flex: none; width: auto; min-width: 150px; padding: 5px 8px;
   font-size: 13px; }
+
+/* API keys: one row per key, the secret truncated so the table stays readable */
+.keycell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; display: inline-block; max-width: 260px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+  color: var(--muted); }
+.newkey-form { display: flex; gap: 8px; margin: 14px 0 26px; max-width: 460px; }
+.newkey-form input { flex: 1; }
+.newkey-form .btn { flex: none; }
 .conf { display: flex; align-items: center; gap: 8px; min-width: 90px; }
 .conf-track { flex: 1; height: 5px; background: var(--surface-3); border-radius: 99px; overflow: hidden; }
 .conf-fill { height: 100%; border-radius: 99px; }

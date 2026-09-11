@@ -46,6 +46,23 @@ CREATE TABLE IF NOT EXISTS counters (
     count       INTEGER NOT NULL DEFAULT 0
 );
 
+-- API keys. One account can hold several, one per place it is used, so a
+-- key can be named, measured and revoked without disturbing the others.
+-- users.api_key remains as the account's original key and is migrated in
+-- here as "default" on first run; this table is the authority.
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    name       TEXT NOT NULL,
+    api_key    TEXT UNIQUE NOT NULL,
+    calls      INTEGER NOT NULL DEFAULT 0,
+    last_used  TEXT NOT NULL DEFAULT '',
+    revoked    INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(api_key);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id, id);
+
 -- Credits this deployment has spent, per named Clearout pool. Clearout's own
 -- dashboard reports per-token usage; this is the same number from our side,
 -- so a pool's spend can be read without leaving the app -- and so a mismatch
@@ -112,6 +129,15 @@ class Users:
                     ("can_clearout", "INTEGER NOT NULL DEFAULT 0")):
                 if name not in cols:
                     conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (name, ddl))
+
+            # Adopt every account's existing key into api_keys as "default".
+            # Without this, moving authentication to the new table would
+            # invalidate every key already in use.
+            conn.execute(
+                """INSERT OR IGNORE INTO api_keys
+                       (user_id, name, api_key, created_at)
+                   SELECT id, 'default', api_key, created_at FROM users
+                   WHERE api_key IS NOT NULL AND api_key != ''""")
 
             # One-time: when email verification becomes mandatory, grandfather
             # every account that already exists so the new gate never locks out
@@ -290,12 +316,66 @@ class Users:
         return dict(row) if row else None
 
     def by_api_key(self, api_key: str) -> Optional[dict]:
+        """Resolve a key to its owner, and record the call against that key.
+
+        The returned dict is the user, with `_key_id` and `_key_name` added so
+        callers can say WHICH key was used. A revoked key resolves to nothing,
+        which is the point of revoking it.
+        """
         if not api_key:
             return None
+        key = api_key.strip()
         with self._conn() as conn:
-            row = conn.execute("SELECT * FROM users WHERE api_key = ?",
-                               (api_key.strip(),)).fetchone()
-        return dict(row) if row else None
+            row = conn.execute(
+                """SELECT u.*, k.id AS _key_id, k.name AS _key_name
+                   FROM api_keys k JOIN users u ON u.id = k.user_id
+                   WHERE k.api_key = ? AND k.revoked = 0""", (key,)).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE api_keys SET calls = calls + 1, last_used = ? WHERE id = ?",
+                (_now().isoformat(timespec="seconds"), row["_key_id"]))
+        return dict(row)
+
+    # -- API keys ---------------------------------------------------------
+
+    def list_api_keys(self, user_id: int, include_revoked: bool = False):
+        sql = "SELECT * FROM api_keys WHERE user_id = ?"
+        if not include_revoked:
+            sql += " AND revoked = 0"
+        sql += " ORDER BY id"
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute(sql, (user_id,)).fetchall()]
+
+    def create_api_key(self, user_id: int, name: str) -> str:
+        """Mint a new named key for an account. Names need not be unique --
+        they are a label for humans, not an identifier."""
+        name = (name or "").strip()[:40] or "unnamed"
+        key = "ev_" + secrets.token_urlsafe(32)
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO api_keys (user_id, name, api_key, created_at)
+                   VALUES (?,?,?,?)""",
+                (user_id, name, key, _now().isoformat(timespec="seconds")))
+        return key
+
+    def revoke_api_key(self, user_id: int, key_id: int) -> bool:
+        """Revoke one key. Scoped to the owner, so an id from another account
+        cannot be revoked by guessing it. Never deletes: the row keeps the
+        call count, so revoking does not erase the record of what it did."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE api_keys SET revoked = 1 WHERE id = ? AND user_id = ?",
+                (key_id, user_id))
+            return cur.rowcount > 0
+
+    def rename_api_key(self, user_id: int, key_id: int, name: str) -> bool:
+        name = (name or "").strip()[:40] or "unnamed"
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE api_keys SET name = ? WHERE id = ? AND user_id = ?",
+                (name, key_id, user_id))
+            return cur.rowcount > 0
 
     def check_password(self, email: str, password: str) -> Optional[dict]:
         user = self.by_email(email)
@@ -306,8 +386,24 @@ class Users:
         return user if hmac.compare_digest(expect, got) else None
 
     def rotate_key(self, user_id: int) -> str:
+        """Replace the account's original ("default") key.
+
+        The old row is revoked rather than overwritten, so the calls it made
+        stay on the record. users.api_key is kept in step for anything still
+        reading the account's primary key off the user row.
+        """
         api_key = "ev_" + secrets.token_urlsafe(32)
+        now = _now().isoformat(timespec="seconds")
         with self._conn() as conn:
+            old = conn.execute(
+                "SELECT api_key FROM users WHERE id = ?", (user_id,)).fetchone()
+            if old and old["api_key"]:
+                conn.execute(
+                    "UPDATE api_keys SET revoked = 1 WHERE user_id = ? AND api_key = ?",
+                    (user_id, old["api_key"]))
+            conn.execute(
+                """INSERT INTO api_keys (user_id, name, api_key, created_at)
+                   VALUES (?,?,?,?)""", (user_id, "default", api_key, now))
             conn.execute("UPDATE users SET api_key = ? WHERE id = ?",
                          (api_key, user_id))
         return api_key
