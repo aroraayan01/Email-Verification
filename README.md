@@ -56,7 +56,7 @@ Three things must hold before a single credit is spent:
 
 | | |
 |---|---|
-| **Configured** | a named key is set, and selected as active |
+| **Configured** | at least one named key exists on the server |
 | **Requested** | the upload asked for it — never automatic |
 | **Permitted** | an admin granted that account the permission (admins always have it) |
 
@@ -67,27 +67,40 @@ job: the other four tiers already did their work.
 
 ### Named credit pools
 
-Keys are named, one pool per project, so spend can be attributed:
+Several Clearout keys can be configured at once, each with a name:
 
 ```
-CLEAROUT_KEY_INBOXX=...
-CLEAROUT_KEY_GRAPUP=...
-CLEAROUT_ACTIVE=inboxx
+CLEAROUT_KEY_MAIN=...
+CLEAROUT_KEY_CLIENTA=...
+CLEAROUT_ACTIVE=main        # the default selection, not the only one
 ```
 
-Only the active pool is ever spent. The others are configured so `/admin` can
-show every pool's live balance beside **what this deployment has bought from
-it** — the two numbers that separate your own usage from someone else's. One
-token shared across projects gives a single figure nobody can attribute, which
-makes ordinary usage and a surprise look identical.
+Every pool is spendable. **The uploader picks which one pays** — a dropdown
+beside the Clearout checkbox, pre-selected to `CLEAROUT_ACTIVE` — and the job
+records the pool it was billed to. `/admin` then shows each pool's live
+balance beside what this deployment bought from it:
 
-Selecting is deliberate rather than clever: with one pool configured it is
-chosen automatically, but with several and no `CLEAROUT_ACTIVE`, tier 4 stays
-**off**. Guessing which pool to spend from is guessing whose money to spend.
-Likewise, a `CLEAROUT_ACTIVE` naming a pool that does not exist disables the
-tier rather than falling back to another one.
+```
+Pool             Credits left   Spent here   Runs   Last spend
+main   default   25,869         141          1      2026-09-11 08:31
+clienta          4,120          38           2      2026-09-10 17:02
+```
 
-`CLEAROUT_API_KEY` still works and registers as a pool named `default`.
+Those two columns are the point. One anonymous token gives a single balance
+nobody can account for; named pools make each job's cost attributable to a
+client, a budget, or a project. A gap between "spent here" and the balance is
+usage from somewhere else — another deployment sharing the same key.
+
+The dropdown appears only when more than one pool is configured; a
+single-option menu is not a decision anyone has to make.
+
+Selection refuses to guess. A name that isn't configured is **rejected**
+rather than quietly billed to the default — being charged to a pool you did
+not name is worse than being told the name was wrong. With several pools and
+no `CLEAROUT_ACTIVE`, a caller that names none is refused too.
+
+`CLEAROUT_API_KEY` still works and registers as a pool named `default`, so an
+existing `app.env` keeps running untouched.
 
 Two vendor-side constraints are handled by construction rather than by
 discovering them:
@@ -133,8 +146,8 @@ Then open <http://127.0.0.1:8000>.
 | `GLOBAL_SMTP_PER_HOUR` | `400` | Server-wide probe cap |
 | `USE_CACHE` | on | Serve repeat lookups from the verdict cache |
 | `BASE_URL` | `https://inboxx.work` | Used in verification/reset links |
-| `CLEAROUT_KEY_<NAME>` | — | A named credit pool, one per project (`CLEAROUT_KEY_INBOXX=…`). Enables tier 4 |
-| `CLEAROUT_ACTIVE` | — | Which pool this deployment spends. Optional when only one is configured |
+| `CLEAROUT_KEY_<NAME>` | — | A named credit pool (`CLEAROUT_KEY_MAIN=…`). Configure as many as you like; enables tier 4 |
+| `CLEAROUT_ACTIVE` | — | The pool pre-selected for new jobs. Optional when only one is configured |
 | `CLEAROUT_API_KEY` | — | Legacy single key; registers as a pool named `default`. `CLEAROUT_API_TOKEN` also accepted |
 | `CLEAROUT_THRESHOLD` | `90` | Confidence line — unproven addresses scored below it are the ones bought |
 | `CLEAROUT_CONCURRENCY` | `8` | Parallel calls in flight |

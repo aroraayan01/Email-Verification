@@ -35,8 +35,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     error       TEXT DEFAULT '',
     created_at  TEXT NOT NULL,
     finished_at TEXT DEFAULT '',
-    -- Clearout credits this job actually spent (tier 4).
-    credits_spent INTEGER DEFAULT 0
+    -- Clearout credits this job actually spent (tier 4), and which named
+    -- pool paid for them.
+    credits_spent INTEGER DEFAULT 0,
+    clearout_key  TEXT DEFAULT ''
 );
 """
 
@@ -54,9 +56,10 @@ class JobStore:
             conn.executescript(SCHEMA)
             # Migrate job DBs created before tier 4 existed.
             cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)")]
-            if "credits_spent" not in cols:
-                conn.execute("ALTER TABLE jobs ADD COLUMN "
-                             "credits_spent INTEGER DEFAULT 0")
+            for name, ddl in (("credits_spent", "INTEGER DEFAULT 0"),
+                              ("clearout_key", "TEXT DEFAULT ''")):
+                if name not in cols:
+                    conn.execute("ALTER TABLE jobs ADD COLUMN %s %s" % (name, ddl))
 
     def _conn(self):
         conn = sqlite3.connect(self.db_path, timeout=30)

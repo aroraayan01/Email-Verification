@@ -643,8 +643,8 @@ async def admin_panel(request: Request):
                 "<tr><td><b>%s</b>%s</td><td>%s</td><td>%s</td>"
                 "<td class='muted'>%s</td><td class='muted'>%s</td></tr>"
                 % (name,
-                   " <span class='pill valid'>active</span>" if is_active
-                   else " <span class='pill unknown'>idle</span>",
+                   " <span class='pill valid'>default</span>" if is_active
+                   else "",
                    "{:,}".format(available) if isinstance(available, int)
                    else "<span class='muted'>%s</span>" % (bal.get("error") or "—"),
                    "{:,}".format(used.get("credits", 0)),
@@ -656,12 +656,14 @@ async def admin_panel(request: Request):
             '<div class="table-wrap"><table><thead><tr><th>Pool</th>'
             '<th>Credits left</th><th>Spent here</th><th>Runs</th>'
             '<th>Last spend</th></tr></thead><tbody>%s</tbody></table></div>'
-            '<p class="muted" style="margin-top:8px">"Spent here" is what this '
-            'deployment bought. A gap between that and the balance is usage '
-            'from elsewhere &mdash; another project sharing the same key.</p>'
+            '<p class="muted" style="margin-top:8px">Every pool can be charged '
+            '&mdash; the uploader picks which one pays for a job, and '
+            '"default" is pre-selected. "Spent here" is what this deployment '
+            'bought; a gap between that and the balance is usage from '
+            'elsewhere, such as another project sharing the same key.</p>'
             % pool_rows)
 
-        # The headline tile stays the ACTIVE pool -- the one being spent.
+        # The headline tile shows the DEFAULT pool -- the one most jobs bill to.
         active_bal = next((b for (n, _c), b in zip(
             [(n, c) for n, c in configs if c is not None], balances)
             if n == active), None)

@@ -66,16 +66,19 @@ USE_CACHE = os.environ.get("USE_CACHE", "1").lower() in ("1", "true", "yes")
 # CLEAROUT_THRESHOLD is the confidence line: unproven addresses our own pattern
 # tier scores below it are the ones worth buying.
 #
-# Keys are NAMED, one pool per project:
+# Keys are NAMED, and several can be configured at once:
 #
-#     CLEAROUT_KEY_INBOXX=...
-#     CLEAROUT_KEY_GRAPUP=...
-#     CLEAROUT_ACTIVE=inboxx
+#     CLEAROUT_KEY_MAIN=...
+#     CLEAROUT_KEY_CLIENTA=...
+#     CLEAROUT_ACTIVE=main        # the default selection, not the only one
 #
-# Only the active one is ever spent; the others are configured so the admin
-# console can show every pool's balance side by side. That is the whole point
-# of naming them -- one shared token across projects gives a single number
-# nobody can attribute, and no way to tell ordinary usage from a surprise.
+# Every configured key is spendable; the uploader picks which one pays for a
+# given job, and each job records the pool it came out of. CLEAROUT_ACTIVE is
+# only the pre-selected default for callers that don't choose.
+#
+# Naming them is what makes spend attributable: one anonymous token gives a
+# single balance nobody can account for, and no way to tell ordinary usage from
+# a surprise.
 #
 # CLEAROUT_API_KEY (and CLEAROUT_API_TOKEN, the name the sibling GrapUp project
 # uses) still work and register as a key named "default", so an existing
@@ -98,12 +101,12 @@ def _read_clearout_keys():
 
 
 def _pick_active(keys):
-    """Which named key this deployment spends.
+    """The DEFAULT pool, used when a caller doesn't name one.
 
     Explicit CLEAROUT_ACTIVE wins. Otherwise: the only key, if there is
     exactly one -- naming a single key should not also require selecting it.
-    With several and no choice made, spend NOTHING rather than guess, because
-    guessing here spends someone's money.
+    With several and no default set there is no default, and a caller that
+    doesn't choose is refused rather than billed to a pool picked for them.
     """
     wanted = os.environ.get("CLEAROUT_ACTIVE", "").strip().lower()
     if wanted:
@@ -111,6 +114,18 @@ def _pick_active(keys):
     if len(keys) == 1:
         return next(iter(keys))
     return ""
+
+
+def resolve_clearout_key(requested: str = "") -> str:
+    """The pool name a request should be billed to, or "" if none is valid.
+
+    An unknown name never falls through to the default: being billed to a pool
+    you did not name is worse than being told the name was wrong.
+    """
+    requested = (requested or "").strip().lower()
+    if requested:
+        return requested if requested in CLEAROUT_KEYS else ""
+    return CLEAROUT_ACTIVE
 
 
 CLEAROUT_KEYS = _read_clearout_keys()
@@ -196,6 +211,7 @@ class VerifyRequest(BaseModel):
     email: str
     use_cache: bool = True
     use_clearout: bool = False
+    clearout_key: str = ""      # which named pool pays; "" = the default
 
 
 class FindRequest(BaseModel):
@@ -236,11 +252,15 @@ def clearout_key_names():
 def may_use_clearout(account) -> bool:
     """Is this account allowed to spend credits?
 
-    Three things must all hold: the server has a key, the request came from a
-    real account, and that account was granted the permission. Admins always
-    have it -- it is their balance being spent.
+    Three things must all hold: the server has at least one key, the request
+    came from a real account, and that account was granted the permission.
+    Admins always have it -- it is their balance being spent.
+
+    Gated on ANY pool existing, not on the default one: with several pools and
+    no default set, the caller names the pool, and refusing them here would be
+    refusing a spend that is perfectly well specified.
     """
-    if not CLEAROUT_API_KEY or not account:
+    if not CLEAROUT_KEYS or not account:
         return False
     return bool(account.get("is_admin") or account.get("can_clearout"))
 
@@ -266,13 +286,21 @@ async def verify_one(req: VerifyRequest, request: Request):
         smtp_config = ProbeConfig(helo=SMTP_HELO, mail_from=SMTP_MAIL_FROM)
 
     use_vendor = bool(req.use_clearout) and may_use_clearout(account)
+    pool = ""
+    if use_vendor:
+        pool = resolve_clearout_key(req.clearout_key)
+        if not pool:
+            raise HTTPException(
+                400, "unknown Clearout key %r" % req.clearout_key
+                     if req.clearout_key else
+                     "no Clearout key chosen, and no default is configured")
 
     cache = _cache()
     try:
         verdicts, report = await run_engine(
             [email], cache if req.use_cache else None, use_microsoft=True,
             use_smtp=ENABLE_SMTP, smtp_config=smtp_config,
-            use_vendor=use_vendor, vendor_config=_clearout_config(),
+            use_vendor=use_vendor, vendor_config=_clearout_config(pool),
             vendor_threshold=CLEAROUT_THRESHOLD)
     finally:
         if cache: cache.close()
@@ -280,7 +308,7 @@ async def verify_one(req: VerifyRequest, request: Request):
     v = verdicts[0]
     if account:
         _users.log_query(account["id"], "verify", email, v.status, "web")
-    _users.record_clearout_spend(CLEAROUT_ACTIVE, report.vendor_billed)
+    _users.record_clearout_spend(pool, report.vendor_billed)
     return {
         "email": v.email,
         "status": v.status,
@@ -292,6 +320,7 @@ async def verify_one(req: VerifyRequest, request: Request):
         "suggestion": v.suggestion,
         "billable": v.disposition == "to_vendor",
         "credits_spent": report.vendor_billed,
+        "clearout_key": pool,
         "clearout_error": report.vendor_error,
     }
 
@@ -402,7 +431,7 @@ def _extract_emails(raw: bytes, filename: str):
 
 
 async def _run_job(job_id: str, emails, pattern_threshold: int = 0,
-                   use_vendor: bool = False):
+                   use_vendor: bool = False, clearout_key: str = ""):
     store.update(job_id, status=RUNNING, rows_in=len(emails))
     cache = _cache()
     try:
@@ -418,7 +447,7 @@ async def _run_job(job_id: str, emails, pattern_threshold: int = 0,
             emails, cache, use_microsoft=True, use_smtp=ENABLE_SMTP,
             smtp_config=smtp_config, use_patterns=True,
             pattern_threshold=pattern_threshold,
-            use_vendor=use_vendor, vendor_config=_clearout_config(),
+            use_vendor=use_vendor, vendor_config=_clearout_config(clearout_key),
             vendor_threshold=CLEAROUT_THRESHOLD, log=lambda *_a: None,
             on_progress=on_progress)
         store.write_results(job_id, verdicts)
@@ -427,7 +456,7 @@ async def _run_job(job_id: str, emails, pattern_threshold: int = 0,
         # below can fail -- an untracked credit is worse than an unwritten
         # count, because the money is gone either way.
         from webapp.api import users as _users
-        _users.record_clearout_spend(CLEAROUT_ACTIVE, report.vendor_billed)
+        _users.record_clearout_spend(clearout_key, report.vendor_billed)
 
         import json as _json
         counts = {}
@@ -437,6 +466,7 @@ async def _run_job(job_id: str, emails, pattern_threshold: int = 0,
                      unique_in=report.unique, resolved=report.siphoned,
                      billable=report.billable, counts=_json.dumps(counts),
                      credits_spent=report.vendor_billed,
+                     clearout_key=clearout_key,
                      # A tier-4 failure is not a job failure: everything else
                      # still ran. Record it so the UI can say what happened.
                      error=report.vendor_error or "",
@@ -452,7 +482,7 @@ async def _run_job(job_id: str, emails, pattern_threshold: int = 0,
 @app.post("/api/bulk")
 async def bulk(request: Request, background: BackgroundTasks,
                file: UploadFile = File(...), threshold: int = 0,
-               clearout: bool = False):
+               clearout: bool = False, clearout_key: str = ""):
     raw = await file.read()
     if len(raw) > 25 * 1024 * 1024:
         raise HTTPException(413, "file too large (max 25 MB)")
@@ -471,12 +501,20 @@ async def bulk(request: Request, background: BackgroundTasks,
     # without the grant is refused outright rather than quietly downgraded --
     # a silent no would look like a finished job with nothing bought.
     use_vendor = False
+    pool = ""
     if clearout:
         from webapp.api import current_account
         if not may_use_clearout(current_account(request)):
             raise HTTPException(
                 403, "this account is not allowed to use Clearout"
-                     if CLEAROUT_API_KEY else "Clearout is not configured")
+                     if CLEAROUT_KEYS else "Clearout is not configured")
+        # Resolve the pool up front. A job that starts and only then discovers
+        # it has nothing to bill to has already spent the user's time.
+        pool = resolve_clearout_key(clearout_key)
+        if not pool:
+            raise HTTPException(
+                400, "unknown Clearout key %r" % clearout_key if clearout_key
+                     else "choose a Clearout key -- no default is configured")
         use_vendor = True
 
     job_id = store.create(file.filename or "list.csv")
@@ -486,8 +524,9 @@ async def bulk(request: Request, background: BackgroundTasks,
     # Pass the coroutine FUNCTION, not a coroutine object -- FastAPI inspects
     # it and awaits async callables on the loop. Handing it a sync callable
     # would run it in a worker thread with no event loop.
-    background.add_task(_run_job, job_id, emails, threshold, use_vendor)
-    return {"job_id": job_id, "found": len(emails), "clearout": use_vendor}
+    background.add_task(_run_job, job_id, emails, threshold, use_vendor, pool)
+    return {"job_id": job_id, "found": len(emails), "clearout": use_vendor,
+            "clearout_key": pool}
 
 
 def _extract_name_domain(raw: bytes, filename: str):
@@ -664,7 +703,10 @@ async def me(request: Request):
             "is_admin": bool(account["is_admin"]),
             "verified": bool(account["verified"]),
             "can_clearout": may_use_clearout(account),
-            "clearout_threshold": CLEAROUT_THRESHOLD}
+            "clearout_threshold": CLEAROUT_THRESHOLD,
+            # Pool names only -- never the keys themselves.
+            "clearout_keys": clearout_key_names(),
+            "clearout_default": CLEAROUT_ACTIVE}
 
 
 @app.get("/api/stats")

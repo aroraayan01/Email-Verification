@@ -297,6 +297,7 @@ async function upload(file) {
   body.append("file", file);
   const thresh = parseInt(threshold.value, 10) || 0;
   const co = $("#useClearout")?.checked ? 1 : 0;
+  const coKey = co ? ($("#clearoutKey")?.value || "") : "";
   $("#jobPanel").classList.remove("hidden");
   $("#resultsPanel").classList.add("hidden");
   $("#jobSummary").classList.add("hidden");
@@ -308,8 +309,9 @@ async function upload(file) {
   $("#jobStage").textContent = "Uploading…";
 
   try {
-    const res = await fetch(`/api/bulk?threshold=${thresh}&clearout=${co}`,
-                            { method: "POST", body });
+    const res = await fetch(
+      `/api/bulk?threshold=${thresh}&clearout=${co}&clearout_key=${encodeURIComponent(coKey)}`,
+      { method: "POST", body });
     const d = await res.json();
     if (!res.ok) throw new Error(d.detail || "upload failed");
     currentJob = d.job_id;
@@ -336,7 +338,7 @@ async function pollJob() {
   const pct = j.total ? Math.round((j.done / j.total) * 100) : (j.status === "done" ? 100 : 8);
   $("#jobBar").style.width = pct + "%";
   let finished = "Finished.";
-  if (j.credits_spent) finished += ` ${j.credits_spent} Clearout credit${j.credits_spent === 1 ? "" : "s"} spent.`;
+  if (j.credits_spent) finished += ` ${j.credits_spent} Clearout credit${j.credits_spent === 1 ? "" : "s"} spent${j.clearout_key ? ` from "${j.clearout_key}"` : ""}.`;
   // A done job can still carry a tier-4 complaint (bad key, no balance): the
   // rest of the list verified fine, so say so rather than calling it a failure.
   if (j.status === "done" && j.error) finished += ` Clearout: ${j.error}`;
@@ -468,6 +470,17 @@ async function loadStats() {
     if (d.can_clearout && $("#clearoutRow")) {
       $("#clearoutRow").classList.remove("hidden");
       if ($("#clearoutLine")) $("#clearoutLine").textContent = d.clearout_threshold ?? 90;
+
+      // Which pool pays. Only worth showing when there is a choice to make --
+      // a single-option dropdown is a decision the user doesn't have.
+      const keys = d.clearout_keys || [];
+      const sel = $("#clearoutKey");
+      if (sel && keys.length > 1) {
+        sel.innerHTML = keys
+          .map((k) => `<option value="${esc(k)}"${k === d.clearout_default ? " selected" : ""}>${esc(k)}</option>`)
+          .join("");
+        $("#clearoutKeyRow").classList.remove("hidden");
+      }
     }
     if ($("#qUsed")) {
       $("#qUsed").textContent = (d.used_today ?? 0).toLocaleString();
